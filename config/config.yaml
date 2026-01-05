@@ -1,0 +1,84 @@
+# GitHub Reviewer AI - Configuration
+
+github:
+    # Repositories to monitor (add more as needed)
+    repositories:
+        - owner: 'moment'
+          name: 'moment'
+
+    # Data fetching settings
+    max_prs_to_fetch: 500
+    api_rate_limit_delay: 0.3 # seconds between API calls
+
+    # Webhook settings
+    webhook:
+        enabled: true
+        events:
+            - 'pull_request.opened'
+        port: 5000
+
+llm:
+    provider: 'openrouter'
+    model: 'qwen/qwen-2.5-72b-instruct'
+    temperature: 0.3
+    max_tokens: 4000
+    retry_attempts: 3
+    retry_delay: 2 # seconds
+
+profile_generation:
+    batch_size: 15 # profiles to generate at once
+    delay_between_profiles: 2 # seconds
+    min_reviews_for_profile: 2 # minimum reviews to create profile
+    checkpoint_enabled: true
+
+    # JavaScript skill categories (from your notebooks)
+    skill_categories:
+        - 'Framework/Library Expertise'
+        - 'Asynchronous Programming'
+        - 'API Design & Consumption'
+        - 'Error Handling'
+        - 'Frontend Development Skills'
+        - 'Backend Development Skills'
+        - 'DevOps & Deployment'
+        - 'Advanced JavaScript Concepts'
+        - 'Functional Programming'
+        - 'Data Structures & Algorithms'
+        - 'TypeScript'
+        - 'Progressive Web Apps (PWA)'
+        - 'Mobile Development with JavaScript'
+        - 'Web Performance Optimization'
+        - 'Event-Driven Architecture'
+        - 'Dependency Management'
+        - 'Graphical Data Visualization'
+
+reviewer_assignment:
+    top_k_similar_prs: 5 # number of similar PRs to find
+    top_k_reviewers: 3 # number of reviewers to suggest
+    min_confidence_score: 0.4 # minimum match score
+    exclude_pr_author: true
+
+    # Scoring weights for hybrid matching
+    weights:
+        skill_frequency: 0.4
+        experience_level: 0.2
+        review_activity: 0.2
+        similarity_match: 0.2
+
+embeddings:
+    model: 'sentence-transformers/all-MiniLM-L6-v2'
+    vector_store: 'faiss'
+    dimension: 384 # all-MiniLM-L6-v2 dimension
+
+database:
+    type: 'sqlite'
+    path: 'data/cache/reviewers.db'
+    tables:
+        - 'reviewer_profiles'
+        - 'pr_cache'
+        - 'assignment_history'
+
+logging:
+    level: 'INFO'
+    format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    file: 'logs/app.log'
+    console: true
