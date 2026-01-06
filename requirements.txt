@@ -7,9 +7,10 @@ PyGithub==2.1.1
 requests==2.31.0
 
 # AI/LLM
-langchain==0.1.0
-langchain-openai==0.0.2
-openai==1.6.1
+langchain==0.1.20
+langchain-openai==0.0.5
+langchain-community
+openai==1.12.0
 
 # Embeddings & Vector Store
 sentence-transformers==2.2.2
@@ -24,8 +25,6 @@ numpy==1.24.3
 flask==3.0.0
 gunicorn==21.2.0
 
-# Database
-sqlite3  # Built-in, no need to install
 
 # Utilities
 pydantic==2.5.0
