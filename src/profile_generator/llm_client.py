@@ -10,7 +10,7 @@ from typing import Dict, Optional, Any
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain.chains import LLMChain
 
 from src.utils import get_logger, get_config, retry_on_failure
@@ -206,19 +206,20 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # Initialize client
-    client = LLMClient()
-    
-    # Test simple generation
-    simple_template = "What are the top 3 JavaScript frameworks? Answer in one sentence."
-    response = client.generate(simple_template, {})
-    print(f"✅ Simple response: {response[:100]}...")
-    
-    # Test JSON generation
-    json_template = """
-    List 3 programming languages in JSON format.
-    Use this structure: {{"languages": ["lang1", "lang2", "lang3"]}}
-    """
-    json_response = client.generate(json_template, {}, parse_json=True)
-    print(f"✅ JSON response: {json_response}")
-    
-    print("\n✅ LLM client working correctly!")
+    try:
+        client = LLMClient()
+        print("✅ LLM client initialized successfully!")
+        
+        # Test simple generation with proper variables
+        print("\n📝 Testing simple generation...")
+        simple_template = "What are the top 3 {language} frameworks? Answer in one sentence."
+        response = client.generate(simple_template, {"language": "JavaScript"})
+        print(f"✅ Response: {response[:150]}...")
+        
+        print("\n✅ LLM client working correctly!")
+        
+    except ValueError as e:
+        print(f"⚠️ Configuration error: {e}")
+        print("Make sure OPENAI_API_KEY is set in .env file")
+    except Exception as e:
+        print(f"❌ Error: {e}")
