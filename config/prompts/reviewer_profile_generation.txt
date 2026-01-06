@@ -1,0 +1,125 @@
+Based on the following JavaScript skills analysis, generate a comprehensive JavaScript reviewer profile:
+
+Reviewer: {reviewer_name}
+Total Reviews: {review_count}
+Repositories: {repo_list}
+
+Skills Analysis:
+{skills_analysis}
+
+VALID CATEGORY NAMES FOR javascript_skill_matrix (THESE ARE THE ONLY ALLOWED KEYS):
+{valid_categories}
+
+JavaScript Skill Matrix Details:
+{js_categories}
+
+Generate a JavaScript reviewer profile that includes:
+1. Experience level assessment (Junior/Mid/Senior/Lead) based on JavaScript review quality
+2. Primary JavaScript technical skills and frameworks they show expertise in
+3. Overall JavaScript reviewer summary
+4. Detailed skill matrix mapping to the provided JavaScript categories WITH EMBEDDED FREQUENCY
+
+========== CRITICAL RULES FOR javascript_skill_matrix ==========
+YOU MUST FOLLOW THESE RULES EXACTLY OR THE OUTPUT WILL BE REJECTED:
+
+FREQUENCY EMBEDDING RULES:
+1. For each category that has skills, ADD the frequency count to the category name in the KEY
+2. Format: "Category Name, frequency: X" where X is the total count for that category
+3. For each individual skill, ALSO ADD the frequency count to the skill name in the VALUE
+4. Format: "Skill Name, frequency: Y" where Y is the count for that specific skill
+5. For categories with NO skills (empty arrays), DO NOT add frequency - just use the category name alone
+
+CATEGORY NAME RULES:
+1. ONLY use these EXACT base category names:
+   - "Framework/Library Expertise"
+   - "Asynchronous Programming"
+   - "API Design & Consumption"
+   - "Error Handling"
+   - "Frontend Development Skills"
+   - "Backend Development Skills"
+   - "DevOps & Deployment"
+   - "Advanced JavaScript Concepts"
+   - "Functional Programming"
+   - "Data Structures & Algorithms"
+   - "TypeScript"
+   - "Progressive Web Apps (PWA)"
+   - "Mobile Development with JavaScript"
+   - "Web Performance Optimization"
+   - "Event-Driven Architecture"
+   - "Dependency Management"
+   - "Graphical Data Visualization"
+
+2. DO NOT and NEVER EVER create any new category names
+3. DO NOT and NEVER EVER use subcategory names like "Testing Libraries" or "Backend Frameworks"
+4. DO NOT and NEVER EVER use individual skill names like "Node.js", "Express.js", "CI/CD" as category names
+5. If you see skills related to testing (Jest, Mocha, etc.), count them under "Framework/Library Expertise"
+6. If you see skills related to code quality, linting, etc., count them appropriately under existing categories
+
+Example CORRECT javascript_skill_matrix:
+{{
+  "Framework/Library Expertise, frequency: 15": ["Node.js, frequency: 6", "Express.js, frequency: 5", "Jest, frequency: 4"],
+  "Asynchronous Programming, frequency: 5": ["Promises, frequency: 3", "async/await, frequency: 2"],
+  "API Design & Consumption, frequency: 10": ["RESTful APIs, frequency: 10"],
+  "Backend Development Skills, frequency: 20": ["Middleware, frequency: 8", "API Endpoints, frequency: 7", "Authentication/Authorization, frequency: 5"],
+  "DevOps & Deployment, frequency: 10": ["CI/CD Pipelines, frequency: 6", "Containerization, frequency: 4"],
+  "Advanced JavaScript Concepts, frequency: 5": ["Prototypes & Inheritance, frequency: 3", "Module Systems, frequency: 2"],
+  "Dependency Management, frequency: 10": ["npm/yarn, frequency: 10"],
+  "Error Handling": [],
+  "Frontend Development Skills": [],
+  "Functional Programming": [],
+  "Data Structures & Algorithms": [],
+  "TypeScript": [],
+  "Progressive Web Apps (PWA)": [],
+  "Mobile Development with JavaScript": [],
+  "Web Performance Optimization": [],
+  "Event-Driven Architecture": [],
+  "Graphical Data Visualization": []
+}}
+
+Example WRONG javascript_skill_matrix (DO NOT DO THIS):
+{{
+  "Testing Libraries, frequency: 5": ["Jest, frequency: 5"],  ← WRONG! "Testing Libraries" is not a main category
+  "Node.js": ["Express.js"],  ← WRONG! "Node.js" is a skill, not a category
+  "Framework/Library Expertise": ["Node.js", "Express.js"],  ← WRONG! Missing frequency for non-empty array AND individual skills
+  "Framework/Library Expertise, frequency: 10": ["Node.js", "Express.js"]  ← WRONG! Missing frequency for individual skills
+}}
+========== END OF CRITICAL RULES FOR FREQUENCY EMBEDDING ==========
+
+========== CRITICAL RULES FOR SKILL SELECTION ==========
+YOU MUST FOLLOW THESE RULES EXACTLY FOR THE SKILL MATRIX:
+
+1. The javascript_skill_matrix MUST use the EXACT 17 category names as keys (same as skill_frequency)
+2. For each category, ONLY include skills that are EXPLICITLY LISTED in the subcategory definitions above
+3. DO NOT add skills that are not in the predefined lists (e.g., "path-to-regexp", "HTTP/2", etc.)
+4. If no evidence found for a category, use an empty array []
+5. DO NOT invent or add new skills - ONLY use skills from the predefined lists
+
+Example CORRECT javascript_skill_matrix:
+{{
+  "Framework/Library Expertise, frequency: 15": ["Node.js, frequency: 6", "Express.js, frequency: 5", "Jest, frequency: 4"],
+  "API Design & Consumption, frequency: 10": ["RESTful APIs, frequency: 8", "Authentication & Authorization, frequency: 2"],
+  "Backend Development Skills, frequency: 20": ["Middleware, frequency: 8", "API Endpoints, frequency: 12"],
+  "Dependency Management, frequency: 10": ["npm/yarn, frequency: 10"],
+  "TypeScript": []
+}}
+
+Example WRONG javascript_skill_matrix (DO NOT DO THIS):
+{{
+  "Framework/Library Expertise": ["Node.js", "Express.js", "path-to-regexp"],  ← WRONG! "path-to-regexp" not in list AND missing frequencies
+  "API Design & Consumption, frequency: 10": ["RESTful APIs", "HTTP/2"],  ← WRONG! "HTTP/2" not in list AND missing individual frequencies
+  "DevOps & Deployment": ["CI/CD Pipelines", "Dependency Management"]  ← WRONG! "Dependency Management" is a category, not a skill, AND missing frequencies
+}}
+========== END OF CRITICAL RULES ==========
+
+{format_instructions}
+
+Be specific and evidence-based in your JavaScript skill assessment.
+Map identified skills to the appropriate categories in the skill matrix.
+Count category usage frequency based on evidence from PR titles, descriptions, and review patterns.
+REMEMBER: 
+- Embed frequency counts in BOTH the category names AND individual skill names for non-empty skill arrays!
+- Only use the 17 exact base category names!
+- Only use skills EXPLICITLY listed in the subcategory definitions for javascript_skill_matrix!
+- DO NOT invent new skills or add skills not in the predefined lists!
+- Format: "Category Name, frequency: X": ["skill1, frequency: Y", "skill2, frequency: Z"]
+- The category frequency should be the SUM of all individual skill frequencies in that category

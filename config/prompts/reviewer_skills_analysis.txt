@@ -1,0 +1,19 @@
+Analyze the following GitHub Review data for reviewer {reviewer_name} and extract their JavaScript technical skills and expertise:
+
+Review Data:
+{review_data}
+
+Focus specifically on JavaScript-related skills. Based on this review data, identify:
+1. JavaScript frameworks and libraries they show expertise in reviewing (React, Vue, Angular, Node.js, etc.)
+2. JavaScript programming patterns and paradigms they understand
+3. Frontend vs Backend JavaScript knowledge demonstrated in reviews
+4. Testing frameworks and methodologies knowledge in JavaScript
+5. Build tools and development workflow understanding
+6. JavaScript ES6+ features knowledge
+7. TypeScript usage and proficiency shown in reviews
+8. API development and consumption patterns knowledge
+9. Asynchronous programming understanding
+10. Code quality and modern JavaScript practices knowledge
+
+Provide a detailed analysis focusing exclusively on JavaScript ecosystem skills and expertise.
+Look for evidence in review comments, review decisions, and technical feedback patterns.
