@@ -1,4 +1,3 @@
-# src/profile_generator/__init__.py
 """
 Profile generation modules for GitHub Reviewer AI
 """
@@ -10,6 +9,7 @@ from src.profile_generator.reviewer_profile_builder import (
     ReviewerProfile,
     ReviewerProfileBuilder
 )
+from src.profile_generator.profile_storage import ProfileStorage
 
 __all__ = [
     'LLMClient',
@@ -17,4 +17,5 @@ __all__ = [
     'SkillAnalyzer',
     'ReviewerProfile',
     'ReviewerProfileBuilder',
+    'ProfileStorage',
 ]
