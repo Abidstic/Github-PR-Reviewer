@@ -1,0 +1,32 @@
+{
+  "reviewer_name": "test_reviewer",
+  "generated_at": "20250107_120000",
+  "stats": {
+    "total_reviews": 10,
+    "total_comments": 5,
+    "total_prs": 8,
+    "repos": [
+      "moment",
+      "lodash"
+    ]
+  },
+  "profile": {
+    "experience_level": "Senior",
+    "programming_languages": [
+      "JavaScript"
+    ],
+    "primary_skills": [
+      "Node.js",
+      "Express.js"
+    ],
+    "summary": "Experienced JavaScript reviewer",
+    "javascript_skill_matrix": {
+      "Framework/Library Expertise, frequency: 15": [
+        "Node.js, frequency: 8",
+        "Express.js, frequency: 7"
+      ],
+      "Asynchronous Programming": [],
+      "API Design & Consumption": []
+    }
+  }
+}
