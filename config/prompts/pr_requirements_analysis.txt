@@ -1,0 +1,62 @@
+Analyze the following Pull Request and extract the technical requirements and expertise needed for an effective code review.
+
+Pull Request Details:
+Repository: {repo_name}
+PR #{pr_number}: {pr_title}
+Author: {pr_author}
+
+Description:
+{pr_description}
+
+Files Changed ({changed_files_count} files):
+{files_changed}
+
+Code Changes:
+- Additions: +{additions} lines
+- Deletions: -{deletions} lines
+
+Labels: {labels}
+
+Based on this PR information, analyze and extract:
+
+1. **Technical Skills Needed**: Identify specific JavaScript frameworks, libraries, and technologies required to review this PR effectively. Only list skills from these categories:
+   - Framework/Library Expertise (React, Vue, Angular, Node.js, Express.js, Jest, Mocha, etc.)
+   - Asynchronous Programming (Promises, async/await, Callbacks, Event Loop)
+   - API Design & Consumption (RESTful APIs, GraphQL, WebSockets, etc.)
+   - Error Handling (try/catch, Error Boundaries, Logging)
+   - Frontend Development Skills (DOM Manipulation, Browser APIs, CSS-in-JS, etc.)
+   - Backend Development Skills (Server Architecture, Middleware, Databases, etc.)
+   - DevOps & Deployment (CI/CD, Docker, Cloud Platforms, etc.)
+   - TypeScript
+   - Testing (Unit Testing, Integration Testing, E2E Testing)
+   - Build Tools (Webpack, Babel, Rollup, etc.)
+
+2. **Expertise Areas Needed**: High-level areas of expertise (e.g., "Backend", "Frontend", "Testing", "DevOps", "Full-Stack")
+
+3. **Complexity Level**: Assess the PR complexity as one of:
+   - "Low": Simple bug fixes, documentation updates, minor refactoring (< 50 lines changed)
+   - "Medium": Feature additions, moderate refactoring, multiple file changes (50-200 lines)
+   - "High": Major features, architectural changes, complex logic (> 200 lines)
+
+4. **Review Focus Areas**: What should the reviewer focus on? (e.g., "Code Quality", "Performance", "Security", "Architecture", "Testing Coverage", "API Design")
+
+5. **Primary Language**: Programming language (should be "JavaScript" or "TypeScript")
+
+6. **Frameworks Involved**: Specific frameworks detected (e.g., ["Express.js", "Jest"])
+
+CRITICAL INSTRUCTIONS:
+- Only suggest skills that are EXPLICITLY evident in the PR title, description, or file changes
+- Do NOT invent or assume skills that aren't clearly indicated
+- If framework/library is mentioned in files (package.json, imports, etc.), include it
+- Be conservative - it's better to suggest fewer skills accurately than many skills speculatively
+- Focus on JavaScript/TypeScript ecosystem only
+
+{format_instructions}
+
+Output the analysis as a JSON object with these exact keys:
+- technical_skills_needed (array of strings)
+- expertise_areas_needed (array of strings)
+- complexity_level (string: "Low", "Medium", or "High")
+- review_focus_areas (array of strings)
+- primary_language (string)
+- frameworks_involved (array of strings)
