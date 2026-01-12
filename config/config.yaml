@@ -3,8 +3,8 @@
 github:
     # Repositories to monitor (add more as needed)
     repositories:
-        - owner: 'moment'
-          name: 'moment'
+        - owner: 'Abidstic'
+          name: 'express'
 
     # Data fetching settings
     max_prs_to_fetch: 500
