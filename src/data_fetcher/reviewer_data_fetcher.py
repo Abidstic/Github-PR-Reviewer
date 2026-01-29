@@ -28,7 +28,7 @@ class ReviewerDataFetcher:
         self.config = get_config()
         
         # Settings from config
-        self.max_prs = self.config.get('github.max_prs_to_fetch', 500)
+        self.max_prs = self.config.get('github.max_prs_to_fetch')
         
         logger.info("✅ Reviewer data fetcher initialized")
     
@@ -194,7 +194,7 @@ class ReviewerDataFetcher:
         self,
         owner: str,
         repo: str,
-        max_prs: Optional[int] = None
+        max_prs_to_fetch: Optional[int] = None
     ) -> Dict:
         """
         Fetch reviewer data for entire repository
@@ -207,8 +207,13 @@ class ReviewerDataFetcher:
         Returns:
             Complete repository reviewer data with metadata
         """
+        max_prs = max_prs_to_fetch 
+        
         if max_prs is None:
-            max_prs = self.max_prs
+            logger.info("📊 Fetching ALL PRs (unlimited)")
+            max_prs = float('inf')  
+        else:
+            logger.info(f"📊 Fetching max {max_prs} PRs")
         
         logger.info(f"🔍 Fetching reviewer data from {owner}/{repo} (max {max_prs} PRs)")
         
@@ -216,7 +221,7 @@ class ReviewerDataFetcher:
         page = 1
         prs_collected = 0
         
-        while prs_collected < max_prs:
+        while max_prs == float('inf') or prs_collected < max_prs:
             per_page = min(30, max_prs - prs_collected)
             
             logger.info(f"📄 Fetching page {page} (PRs {prs_collected + 1}-{prs_collected + per_page})")
@@ -402,7 +407,7 @@ if __name__ == "__main__":
     data = fetcher.fetch_repository_reviewer_data(
         owner='moment',
         repo='moment',
-        max_prs=5  # Small sample for testing
+        max_prs_to_fetch=10
     )
     
     print(f"\n✅ Fetched data:")

@@ -17,3 +17,38 @@ flask==3.0.0
 
 # Utilities
 python-json-logger==2.0.7
+
+
+
+# Core dependencies
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# GitHub API
+PyGithub==2.1.1
+requests==2.31.0
+
+# AI/LLM
+langchain==0.1.20
+langchain-openai==0.1.1
+langchain-community
+openai==1.12.0
+
+# Embeddings & Vector Store
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
+torch==2.1.0
+
+# Data Processing
+pandas==2.1.4
+numpy==1.24.3
+
+# Webhook Server
+flask==3.0.0
+gunicorn==21.2.0
+
+
+# Utilities
+pydantic==2.7.4
+pydantic-settings==2.5.2
+python-json-logger==2.0.7

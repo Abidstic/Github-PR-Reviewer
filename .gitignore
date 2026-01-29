@@ -13,6 +13,7 @@ dist/
 
 # Environment variables
 .env
+.venv/
 
 # Data files
 data/raw/*

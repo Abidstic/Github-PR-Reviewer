@@ -9,12 +9,23 @@ from typing import List, Dict, Optional, Tuple
 
 try:
     from sentence_transformers import SentenceTransformer
-    from langchain.embeddings import HuggingFaceEmbeddings
-    from langchain.vectorstores import FAISS
-    from langchain.docstore.document import Document
+    try:
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        from langchain_community.vectorstores import FAISS
+        from langchain_community.docstore.document import Document
+    except ImportError:
+        from langchain.embeddings import HuggingFaceEmbeddings
+        from langchain.vectorstores import FAISS
+        from langchain.docstore.document import Document
     EMBEDDINGS_AVAILABLE = True
 except ImportError:
     EMBEDDINGS_AVAILABLE = False
+
+    # Create dummy Document class when embeddings not available
+    class Document:
+        def __init__(self, page_content="", metadata=None):
+            self.page_content = page_content
+            self.metadata = metadata or {}
 
 from src.utils import get_logger, get_config
 
