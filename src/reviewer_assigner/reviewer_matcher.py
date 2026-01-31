@@ -85,8 +85,9 @@ class ReviewerMatcher:
         
         logger.info(f"🎯 Matching reviewers for PR #{pr_number} (author: {pr_author})")
         
-        # Get all reviewers
-        all_reviewers = self._get_all_reviewers(exclude_author=pr_author)
+        # Get reviewers for this repository
+        repo_name = pr_data.get('repo_name')
+        all_reviewers = self._get_all_reviewers(repo_name=repo_name, exclude_author=pr_author)
         
         if not all_reviewers:
             logger.warning("⚠️ No reviewers available")
@@ -164,17 +165,22 @@ class ReviewerMatcher:
             'assignment_reasoning': reasoning
         }
     
-    def _get_all_reviewers(self, exclude_author: Optional[str] = None) -> Dict[str, Dict]:
+    def _get_all_reviewers(
+        self,
+        repo_name: Optional[str] = None,
+        exclude_author: Optional[str] = None
+    ) -> Dict[str, Dict]:
         """
-        Get all reviewer profiles
+        Get reviewer profiles filtered by repository
         
         Args:
+            repo_name: Filter by repository name
             exclude_author: Username to exclude (PR author)
         
         Returns:
             Dictionary of {reviewer_name: profile}
         """
-        reviewer_names = self.storage.list_reviewers()
+        reviewer_names = self.storage.list_reviewers(repo_name=repo_name)
         
         profiles = {}
         for name in reviewer_names:
@@ -236,9 +242,19 @@ class ReviewerMatcher:
             reviewer_name,
             pr_data
         )
+
+        # 5. Repository Membership Bonus (New)
+        # Give a 0.5 bonus if they've reviewed this specific repo before
+        repo_bonus = 0.0
+        repo_name = pr_data.get('repo_name')
+        if repo_name and repo_name in profile.get('stats', {}).get('repos', []):
+            repo_bonus = 0.5
         
         # Calculate weighted total
         total = sum(scores[key] * self.weights[key] for key in scores.keys())
+        
+        # Add the repo bonus (capped at 1.0 total)
+        total = min(total + repo_bonus, 1.0)
         
         scores['total'] = round(total, 3)
         
@@ -358,8 +374,10 @@ class ReviewerMatcher:
         stats = profile.get('stats', {})
         total_reviews = stats.get('total_reviews', 0)
         
-        # Normalize (100 reviews = max score)
-        score = min(total_reviews / 100.0, 1.0)
+        # Normalize: More reviews is better, but even 1 review is a start
+        # Using min(sqrt(total / 10), 1.0) so 1 review gives 0.31, 5 gives 0.7, 10+ gives 1.0
+        import math
+        score = min(math.sqrt(total_reviews / 10.0), 1.0)
         
         return score
     

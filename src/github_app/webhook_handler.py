@@ -1,15 +1,15 @@
 """
 Webhook Handler
-Processes GitHub webhook events for PR reviewer assignment
+Processes incoming GitHub webhook events and triggers the assignment pipeline
 """
 
 import hmac
 import hashlib
-from typing import Dict, Optional
-from pathlib import Path
 import json
+from typing import Dict, Optional, Any
 
 from src.reviewer_assigner.assignment_pipeline import AssignmentPipeline
+from src.data_fetcher.github_client import GitHubClient
 from src.utils import get_logger, get_config
 
 logger = get_logger(__name__)
@@ -23,79 +23,85 @@ class WebhookHandler:
         Initialize webhook handler
         
         Args:
-            webhook_secret: GitHub webhook secret for signature verification
+            webhook_secret: Secret for verifying GitHub signatures
         """
         self.config = get_config()
         self.webhook_secret = webhook_secret
-        
-        # Initialize assignment pipeline
-        self.pipeline = AssignmentPipeline(load_vector_store=True)
+        self.pipeline = AssignmentPipeline()
+        self.github = GitHubClient()
         
         logger.info("✅ Webhook Handler initialized")
-    
-    def verify_signature(
-        self,
-        payload_body: bytes,
-        signature_header: str
-    ) -> bool:
+
+    def handle_event(
+        self, 
+        event_type: str, 
+        payload: Dict, 
+        signature: Optional[str] = None,
+        payload_body: Optional[bytes] = None
+    ) -> Dict:
         """
-        Verify GitHub webhook signature
+        Route and handle incoming event
         
         Args:
-            payload_body: Raw request body
-            signature_header: X-Hub-Signature-256 header value
-        
+            event_type: Value of X-GitHub-Event header
+            payload: Parsed JSON payload
+            signature: Value of X-Hub-Signature-256 header
+            payload_body: Raw request body (needed for signature verification)
+            
         Returns:
-            True if signature is valid
+            Response dictionary with status and message
         """
-        if not self.webhook_secret:
-            logger.warning("⚠️ Webhook secret not configured - skipping verification")
+        # Verify signature if secret is provided
+        if self.webhook_secret and signature:
+            if not self._verify_signature(payload_body, signature):
+                logger.error("❌ Invalid webhook signature")
+                return {
+                    'status': 'error',
+                    'message': 'Invalid signature'
+                }
+        
+        logger.info(f"📨 Received webhook: event_type={event_type}")
+        
+        # Route to specific handler
+        if event_type == 'pull_request':
+            return self.handle_pull_request_event(payload)
+        elif event_type == 'installation':
+            return self.handle_installation_event(payload)
+        elif event_type == 'ping':
+            return self.handle_ping_event(payload)
+        else:
+            logger.info(f"ℹ️ Ignoring event type: {event_type}")
+            return {
+                'status': 'ignored',
+                'message': f'Event type {event_type} is not processed'
+            }
+
+    def _verify_signature(self, payload_body: bytes, signature: str) -> bool:
+        """Verify GitHub webhook signature"""
+        if not self.webhook_secret or not signature:
             return True
-        
-        if not signature_header:
-            logger.warning("⚠️ No signature header provided")
-            return False
-        
-        # GitHub sends: sha256=<hash>
-        hash_algorithm, github_signature = signature_header.split('=')
-        
-        if hash_algorithm != 'sha256':
-            logger.warning(f"⚠️ Unsupported hash algorithm: {hash_algorithm}")
-            return False
-        
-        # Compute expected signature
-        mac = hmac.new(
+            
+        if signature.startswith('sha256='):
+            signature = signature[7:]
+            
+        hash_object = hmac.new(
             self.webhook_secret.encode('utf-8'),
             msg=payload_body,
             digestmod=hashlib.sha256
         )
-        expected_signature = mac.hexdigest()
+        expected_signature = hash_object.hexdigest()
         
-        # Compare signatures (constant-time comparison)
-        is_valid = hmac.compare_digest(expected_signature, github_signature)
-        
-        if not is_valid:
-            logger.warning("⚠️ Invalid webhook signature")
-        
-        return is_valid
-    
+        return hmac.compare_digest(expected_signature, signature)
+
     def handle_pull_request_event(self, payload: Dict) -> Dict:
-        """
-        Handle pull_request webhook event
-        
-        Args:
-            payload: GitHub webhook payload
-        
-        Returns:
-            Response dictionary with status and message
-        """
+        """Process pull_request event"""
         action = payload.get('action')
         pr_data_raw = payload.get('pull_request', {})
         repo_data = payload.get('repository', {})
         
         logger.info(f"📥 Received pull_request event: action={action}")
         
-        # Only process 'opened' events
+        # Only process 'opened' and 'reopened' events
         if action not in ['opened', 'reopened']:
             logger.info(f"ℹ️ Ignoring action: {action}")
             return {
@@ -118,226 +124,82 @@ class WebhookHandler:
         
         logger.info(f"🔄 Processing PR #{pr_number} from {repo_name}")
         
-        # Check if already commented
-        if self._should_skip_pr(pr_data):
-            logger.info(f"ℹ️ Skipping PR #{pr_number} (already processed or excluded)")
+        # Skip if it's a draft
+        if pr_data.get('is_draft'):
+            logger.info(f"ℹ️ Skipping PR #{pr_number} (Draft)")
             return {
                 'status': 'skipped',
-                'message': 'PR already processed or should be excluded'
+                'message': 'Draft PRs are not processed'
             }
-        
-        # Process PR through pipeline
+            
+        # Process through pipeline
         try:
             result = self.pipeline.process_pr(
                 pr_data=pr_data,
                 post_to_github=True,
-                dry_run=False  # Actually post!
+                dry_run=False
             )
             
-            if result['posted_to_github']:
-                logger.info(f"✅ Successfully processed PR #{pr_number}")
-                return {
-                    'status': 'success',
-                    'message': f'Reviewer suggestions posted to PR #{pr_number}',
-                    'pr_number': pr_number,
-                    'confidence': result['recommendations']['assignment_confidence'],
-                    'reviewers_suggested': len(result['recommendations']['recommended_reviewers'])
-                }
-            else:
-                logger.warning(f"⚠️ Failed to post to PR #{pr_number}")
-                return {
-                    'status': 'error',
-                    'message': 'Failed to post suggestions to GitHub'
-                }
-                
+            return {
+                'status': 'success',
+                'message': f'Suggestions posted to PR #{pr_number}',
+                'repo': repo_name,
+                'pr': pr_number
+            }
         except Exception as e:
-            logger.error(f"❌ Error processing PR #{pr_number}: {e}")
+            logger.error(f"❌ Pipeline failed: {e}")
             return {
                 'status': 'error',
-                'message': str(e)
+                'message': f'Failed to process PR: {str(e)}'
             }
-    
-    def _extract_pr_data(self, pr_raw: Dict, repo_raw: Dict) -> Optional[Dict]:
-        """
-        Extract PR data from webhook payload
-        
-        Args:
-            pr_raw: Pull request object from webhook
-            repo_raw: Repository object from webhook
-        
-        Returns:
-            Standardized PR data dictionary
-        """
-        try:
-            # Get file changes (requires additional API call in real webhook)
-            # For webhook, we get limited file info
-            changed_files = []
-            if 'changed_files' in pr_raw:
-                # This field exists in the payload
-                changed_files = [f['filename'] for f in pr_raw.get('files', [])]
-            
-            pr_data = {
-                'pr_number': pr_raw['number'],
-                'title': pr_raw['title'],
-                'description': pr_raw.get('body', ''),
-                'author': {
-                    'username': pr_raw['user']['login']
-                },
-                'repo_name': repo_raw['full_name'],
-                'changed_files': changed_files,
-                'additions': pr_raw.get('additions', 0),
-                'deletions': pr_raw.get('deletions', 0),
-                'labels': [label['name'] for label in pr_raw.get('labels', [])],
-                'state': pr_raw['state'],
-                'created_at': pr_raw['created_at']
-            }
-            
-            return pr_data
-            
-        except KeyError as e:
-            logger.error(f"❌ Missing required field in payload: {e}")
-            return None
-    
-    def _should_skip_pr(self, pr_data: Dict) -> bool:
-        """
-        Check if PR should be skipped
-        
-        Args:
-            pr_data: PR data dictionary
-        
-        Returns:
-            True if should skip
-        """
-        # Skip if already has bot comment (optional - implement if needed)
-        # For now, always process
-        return False
-    
-    def handle_ping_event(self, payload: Dict) -> Dict:
-        """
-        Handle ping webhook event (for setup verification)
-        
-        Args:
-            payload: GitHub webhook payload
-        
-        Returns:
-            Response dictionary
-        """
-        logger.info("📡 Received ping event")
-        
-        zen = payload.get('zen', 'No zen provided')
-        hook_id = payload.get('hook_id', 'unknown')
+
+    def handle_installation_event(self, payload: Dict) -> Dict:
+        """Handle App installation/removal"""
+        action = payload.get('action')
+        logger.info(f"📥 Installation event: action={action}")
         
         return {
             'status': 'success',
+            'message': f'Installation {action} handled'
+        }
+
+    def handle_ping_event(self, payload: Dict) -> Dict:
+        """Handle webhook ping test"""
+        logger.info("📡 Received ping event")
+        return {
+            'status': 'success',
             'message': 'Webhook is configured correctly',
-            'zen': zen,
-            'hook_id': hook_id
+            'zen': payload.get('zen', 'No zen provided'),
+            'hook_id': payload.get('hook_id', 'unknown')
         }
-    
-    def handle_event(
-        self,
-        event_type: str,
-        payload: Dict,
-        signature: Optional[str] = None,
-        payload_body: Optional[bytes] = None
-    ) -> Dict:
-        """
-        Main entry point for webhook events
-        
-        Args:
-            event_type: GitHub event type (X-GitHub-Event header)
-            payload: Parsed JSON payload
-            signature: X-Hub-Signature-256 header (for verification)
-            payload_body: Raw request body (for signature verification)
-        
-        Returns:
-            Response dictionary
-        """
-        logger.info(f"📨 Received webhook: event_type={event_type}")
-        
-        # Verify signature if provided
-        if signature and payload_body:
-            if not self.verify_signature(payload_body, signature):
-                return {
-                    'status': 'error',
-                    'message': 'Invalid webhook signature'
-                }
-        
-        # Route to appropriate handler
-        if event_type == 'ping':
-            return self.handle_ping_event(payload)
-        elif event_type == 'pull_request':
-            return self.handle_pull_request_event(payload)
-        else:
-            logger.info(f"ℹ️ Unhandled event type: {event_type}")
+
+    def _extract_pr_data(self, pr_data_raw: Dict, repo_data: Dict) -> Optional[Dict]:
+        """Extract needed fields from GitHub PR payload"""
+        try:
+            pr_number = pr_data_raw.get('number')
+            owner = repo_data.get('owner', {}).get('login')
+            repo = repo_data.get('name')
+            
+            # Fetch files because they don't come in the webhook payload
+            logger.info(f"🔍 Fetching file changes for PR #{pr_number}")
+            files = self.github.get_pr_files(owner, repo, pr_number)
+            changed_files = [f.get('filename') for f in files]
+            logger.info(f"✅ Found {len(changed_files)} changed files")
+
             return {
-                'status': 'ignored',
-                'message': f'Event type {event_type} is not processed'
+                'pr_number': pr_number,
+                'title': pr_data_raw.get('title'),
+                'description': pr_data_raw.get('body', ''),
+                'author': {
+                    'username': pr_data_raw.get('user', {}).get('login')
+                },
+                'repo_name': repo_data.get('full_name'),
+                'changed_files': changed_files,
+                'additions': pr_data_raw.get('additions', 0),
+                'deletions': pr_data_raw.get('deletions', 0),
+                'labels': [l.get('name') for l in pr_data_raw.get('labels', [])],
+                'is_draft': pr_data_raw.get('draft', False)
             }
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    import json
-    
-    print("🎣 Testing Webhook Handler")
-    print("=" * 60)
-    
-    # Sample webhook payload (pull_request.opened)
-    sample_payload = {
-        "action": "opened",
-        "number": 1234,
-        "pull_request": {
-            "number": 1234,
-            "title": "Fix Express.js routing bug",
-            "body": "This PR fixes a routing issue in Express middleware.",
-            "user": {
-                "login": "developer1"
-            },
-            "state": "open",
-            "created_at": "2025-01-07T12:00:00Z",
-            "additions": 85,
-            "deletions": 42,
-            "labels": [
-                {"name": "bug"},
-                {"name": "backend"}
-            ]
-        },
-        "repository": {
-            "full_name": "moment/moment",
-            "name": "moment",
-            "owner": {
-                "login": "moment"
-            }
-        }
-    }
-    
-    try:
-        # Initialize handler
-        handler = WebhookHandler()
-        print("✅ Handler initialized")
-        
-        # Test ping event
-        print("\n📡 Testing ping event...")
-        ping_payload = {
-            "zen": "Design for failure.",
-            "hook_id": 12345
-        }
-        response = handler.handle_event('ping', ping_payload)
-        print(f"✅ Ping response: {response['message']}")
-        
-        # Test pull_request event (dry run in test)
-        print("\n🔄 Testing pull_request event...")
-        print("Note: This will actually process the PR if pipeline is configured")
-        print("Use a test repository to avoid affecting real PRs")
-        
-        # Uncomment to test with real PR processing:
-        # response = handler.handle_event('pull_request', sample_payload)
-        # print(f"Response: {json.dumps(response, indent=2)}")
-        
-        print("\n✅ Webhook Handler working correctly!")
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        except Exception as e:
+            logger.error(f"❌ Error extracting PR data: {e}")
+            return None

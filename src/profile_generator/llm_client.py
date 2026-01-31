@@ -27,28 +27,30 @@ class LLMClient:
         self.config = get_config()
         
         # Get API credentials
-        api_key = api_key or os.getenv('OPENAI_API_KEY')
-        api_base = api_base or os.getenv('OPENAI_API_BASE', 'https://openrouter.ai/api/v1')
+        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
+        self.api_base = api_base or os.getenv('OPENAI_API_BASE', 'https://openrouter.ai/api/v1')
         
-        if not api_key:
+        if not self.api_key:
             raise ValueError("OpenRouter API key missing. Set OPENAI_API_KEY in .env")
         
         # Get LLM settings
-        model = self.config.get('llm.model', 'qwen/qwen-2.5-72b-instruct')
-        temperature = self.config.get('llm.temperature', 0.3)
-        max_tokens = self.config.get('llm.max_tokens', 4000)
-        
-        # Initialize modern ChatOpenAI client
-        self.llm = ChatOpenAI(
-            model=model,  
-            temperature=temperature,
-            max_tokens=max_tokens,
-            api_key=api_key,
-            base_url=api_base,
-            default_headers={"HTTP-Referer": "https://github.com/reviewer-ai", "X-Title": "GitHub Reviewer AI"}
+        self.model = self.config.get('llm.model', 'qwen/qwen-2.5-72b-instruct')
+        self.temperature = self.config.get('llm.temperature', 0.3)
+        self.max_tokens = self.config.get('llm.max_tokens', 4000)
+
+        # We'll use the OpenAI client directly for stability with OpenRouter
+        # This avoids the "proxies" error in older LangChain versions
+        from openai import OpenAI
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.api_base,
+            default_headers={
+                "HTTP-Referer": "https://github.com/reviewer-ai",
+                "X-Title": "GitHub Reviewer AI"
+            }
         )
         
-        logger.info(f"✅ LLM client initialized (model: {model})")
+        logger.info(f"✅ LLM client initialized (model: {self.model} via OpenRouter)")
 
     def load_prompt_template(self, template_name: str) -> str:
         """Load prompt template from file"""
@@ -66,21 +68,31 @@ class LLMClient:
         variables: Dict[str, Any],
         parse_json: bool = False
     ) -> Any:
-        """Generate completion using LCEL pipe syntax"""
+        """Generate completion using direct OpenAI client for maximum stability"""
         # Load template if it's a file path
         if not '\n' in prompt_template and prompt_template.endswith('.txt'):
             prompt_template = self.load_prompt_template(prompt_template)
         
-        # Build the chain: Prompt -> LLM -> String Output
-        prompt = PromptTemplate.from_template(prompt_template)
-        chain = prompt | self.llm | StrOutputParser()
+        # Format the prompt with variables
+        try:
+            prompt_text = prompt_template.format(**variables)
+        except KeyError as e:
+            logger.error(f"❌ Missing variable in prompt template: {e}")
+            raise
         
-        logger.debug("🤖 Generating LLM response...")
+        logger.debug(f"🤖 Generating LLM response for {self.model}...")
         start_time = time.time()
         
         try:
-            # invoke() is the modern replacement for run()
-            response = chain.invoke(variables)
+            # Use direct OpenAI completion call
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt_text}],
+                temperature=self.temperature,
+                max_tokens=self.max_tokens
+            )
+            
+            response = completion.choices[0].message.content
             
             elapsed = time.time() - start_time
             logger.debug(f"✅ LLM response generated in {elapsed:.2f}s")
@@ -91,27 +103,45 @@ class LLMClient:
             logger.error(f"❌ LLM generation failed: {e}")
             raise
 
-    def create_chain(self, prompt_template: str) -> Runnable:
-        """Create a reusable LCEL Runnable"""
-        if not '\n' in prompt_template and prompt_template.endswith('.txt'):
-            prompt_template = self.load_prompt_template(prompt_template)
-        
-        prompt = PromptTemplate.from_template(prompt_template)
-        return prompt | self.llm | StrOutputParser()
-
     def _extract_json(self, text: str) -> Dict:
         """Extract JSON safely from LLM text"""
         import re
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if not json_match:
-            raise ValueError("No JSON object found in response")
         
-        json_str = json_match.group().replace('```json', '').replace('```', '').strip()
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ JSON Parse Error: {e}")
-            raise
+        # 1. Try to find JSON block using markdown indicators
+        json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
+        if json_match:
+            try:
+                content = json_match.group(1).strip()
+                return json.loads(content)
+            except json.JSONDecodeError:
+                # If markdown content is not valid JSON, fall through to other methods
+                pass
+
+        # 2. Try finding the outermost brackets
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            json_str = text[start:end+1]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                # If greedy match fails, try smaller potential JSON objects
+                # (less robust but might catch something)
+                pass
+
+        # 3. Last resort: regex search for anything between braces
+        # using a non-greedy approach for potentially multiple objects
+        brace_matches = re.finditer(r'\{.*?\}', text, re.DOTALL)
+        for match in brace_matches:
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                continue
+
+        # If all else fails
+        logger.error(f"❌ Failed to extract JSON from response. Raw text:\n{text}")
+        raise ValueError("No valid JSON object found in LLM response")
+
 
 
 # Example usage and testing

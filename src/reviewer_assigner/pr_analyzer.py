@@ -78,6 +78,11 @@ Example format:
                 parse_json=True
             )
             
+            # Check if analysis is None
+            if analysis is None:
+                logger.error("❌ LLM returned None - check API key and connectivity")
+                return None
+            
             # Validate analysis
             if self._validate_analysis(analysis):
                 logger.info(f"✅ PR analysis complete: {analysis.get('complexity_level')} complexity, "
@@ -89,6 +94,8 @@ Example format:
                 
         except Exception as e:
             logger.error(f"❌ PR analysis failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def _build_analysis_variables(self, pr_data: Dict) -> Dict:
@@ -104,7 +111,7 @@ Example format:
         # Extract PR details
         pr_number = pr_data.get('pr_number', 0)
         title = pr_data.get('title', 'Untitled')
-        description = pr_data.get('description', 'No description provided')
+        description = pr_data.get('description') or 'No description provided'
         author = pr_data.get('author', {}).get('username', 'Unknown') if pr_data.get('author') else 'Unknown'
         repo_name = pr_data.get('repo_name', 'Unknown Repository')
         

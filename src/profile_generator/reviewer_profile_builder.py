@@ -262,7 +262,7 @@ class ReviewerProfileBuilder:
                 'total_reviews': reviewer_stats.get('total_reviews', 0),
                 'total_comments': reviewer_stats.get('total_comments', 0),
                 'total_prs': reviewer_stats.get('total_prs', 0),
-                'repos': reviewer_stats.get('repos', [])
+                'repos': reviewer_stats.get('repositories_reviewed', [])
             },
             "profile": profile
         }

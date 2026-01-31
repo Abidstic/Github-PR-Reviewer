@@ -86,6 +86,16 @@ class ProfileStorage:
                 confidence_score REAL
             )
         """)
+
+        # Table 4: Processed PRs (checkpointing)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS processed_prs (
+                repo_name TEXT,
+                pr_number INTEGER,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (repo_name, pr_number)
+            )
+        """)
         
         # Indexes for performance
         cursor.execute("""
@@ -289,17 +299,30 @@ class ProfileStorage:
         
         return None
     
-    def list_reviewers(self) -> List[str]:
+    def list_reviewers(self, repo_name: Optional[str] = None) -> List[str]:
         """
-        Get list of all reviewer names
+        Get list of all reviewer names, optionally filtered by repository
         
+        Args:
+            repo_name: Optional repository name (e.g. 'owner/repo') to filter by
+            
         Returns:
             List of reviewer usernames
         """
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
         
-        cursor.execute("SELECT reviewer_name FROM reviewer_profiles ORDER BY reviewer_name")
+        if repo_name:
+            # Find reviewers who have contributed to this specific repo
+            # Since 'repos' is a JSON array string in SQLite, we use LIKE for a simple check
+            cursor.execute("""
+                SELECT reviewer_name FROM reviewer_profiles 
+                WHERE repos LIKE ? 
+                ORDER BY reviewer_name
+            """, (f'%"{repo_name}"%',))
+        else:
+            cursor.execute("SELECT reviewer_name FROM reviewer_profiles ORDER BY reviewer_name")
+            
         reviewers = [row[0] for row in cursor.fetchall()]
         
         conn.close()
@@ -435,6 +458,33 @@ class ProfileStorage:
         conn.close()
         
         logger.debug(f"📊 Tracked assignment for PR #{pr_number}")
+
+    def is_pr_processed(self, repo_name: str, pr_number: int) -> bool:
+        """Check if PR has been processed"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 1 FROM processed_prs 
+            WHERE repo_name = ? AND pr_number = ?
+        """, (repo_name, pr_number))
+        
+        exists = cursor.fetchone() is not None
+        conn.close()
+        return exists
+
+    def mark_pr_processed(self, repo_name: str, pr_number: int):
+        """Mark PR as processed in checkpoint"""
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT OR IGNORE INTO processed_prs (repo_name, pr_number)
+            VALUES (?, ?)
+        """, (repo_name, pr_number))
+        
+        conn.commit()
+        conn.close()
 
 
 # Example usage and testing
