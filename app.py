@@ -56,59 +56,116 @@ def setup_mode(repo: str, max_prs: int = None):
     logger.info("=" * 80)
     
     try:
+        profile_storage = ProfileStorage()
         fetcher = ReviewerDataFetcher()
+        
+        # Pass storage to handle PR-level checkpointing
         data = fetcher.fetch_repository_reviewer_data(
             owner=owner,
             repo=repo_name,
-            max_prs_to_fetch=max_prs
+            max_prs_to_fetch=max_prs,
+            storage=profile_storage
         )
         
-        # Save to file
+        # Save raw data for this run
         data_file = fetcher.save_to_file(data, owner, repo_name)
         logger.info(f"✅ Data saved to: {data_file}")
         
     except Exception as e:
         logger.error(f"❌ Failed to fetch data: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
     
-    # Step 2: Generate reviewer profiles
+    # Check if we actually got any new data
+    total_new_prs = data.get('metadata', {}).get('total_prs_analyzed', 0)
+    if total_new_prs == 0:
+        logger.info("✨ No new PRs to process. All profiles are up to date!")
+        return True
+
+    # Step 2: Generate/Update reviewer profiles
     logger.info("\n" + "=" * 80)
-    logger.info("STEP 2: Generating Reviewer Profiles with AI")
+    logger.info("STEP 2: Generating/Updating Reviewer Profiles")
     logger.info("=" * 80)
     
     try:
         profile_builder = ReviewerProfileBuilder()
-        profile_storage = ProfileStorage()
         
         reviewer_stats = data.get('reviewer_stats', {})
-        logger.info(f"📊 Found {len(reviewer_stats)} reviewers")
+        logger.info(f"📊 Found {len(reviewer_stats)} reviewers with new activity")
         
-        profiles_created = 0
-        for reviewer_name, stats in reviewer_stats.items():
+        profiles_updated = 0
+        
+        for reviewer_name, new_stats in reviewer_stats.items():
             logger.info(f"🔄 Processing: {reviewer_name}")
             
-            # Build and save profile
-            profile_path = profile_builder.build_and_save_profile(
+            # Check for existing profile
+            existing_profile = profile_storage.get_profile(reviewer_name)
+            if existing_profile:
+                logger.info(f"  ℹ️ Updating existing profile for {reviewer_name}")
+            
+            # 1. Build the profile object (calls LLM)
+            profile_data = profile_builder.build_reviewer_profile(
                 reviewer_name=reviewer_name,
-                reviewer_stats=stats
+                reviewer_stats=new_stats
             )
             
-            if profile_path:
-                # Also save to database
-                profile_data = profile_builder.build_reviewer_profile(
-                    reviewer_name=reviewer_name,
-                    reviewer_stats=stats
-                )
-                if profile_data:
-                    profile_storage.save_profile(profile_data)
-                    profiles_created += 1
-                    logger.info(f"✅ Profile created: {reviewer_name}")
+            if profile_data:
+                # 2. Save to JSON and Database
+                json_path, success = profile_storage.save_profile(profile_data)
+                
+                if success:
+                    profiles_updated += 1
+                    logger.info(f"✅ Profile updated and saved: {reviewer_name}")
+                else:
+                    logger.warning(f"⚠️ Failed to save profile to database: {reviewer_name}")
+            else:
+                logger.warning(f"⚠️ Could not generate profile for {reviewer_name} (check logs or min_reviews)")
         
-        logger.info(f"\n✅ Created {profiles_created}/{len(reviewer_stats)} profiles")
+        logger.info(f"\n✅ Total profiles updated: {profiles_updated}")
         
     except Exception as e:
-        logger.error(f"❌ Failed to generate profiles: {e}")
+        logger.error(f"❌ Failed to generate reviewer profiles: {e}")
         return False
+    
+    # Step 2.5: Generate/Update developer profiles
+    logger.info("\n" + "=" * 80)
+    logger.info("STEP 2.5: Generating/Updating Developer Profiles")
+    logger.info("=" * 80)
+    
+    try:
+        from src.profile_generator.developer_profile_builder import DeveloperProfileBuilder
+        
+        dev_profile_builder = DeveloperProfileBuilder()
+        
+        developer_stats = data.get('developer_stats', {})
+        logger.info(f"🔨 Found {len(developer_stats)} developers with new activity")
+        
+        dev_profiles_updated = 0
+        
+        for developer_name, stats in developer_stats.items():
+            logger.info(f"🔄 Processing developer: {developer_name}")
+            
+            try:
+                # Build and save profile
+                profile_path = dev_profile_builder.build_and_save_profile(
+                    developer_name=developer_name,
+                    developer_stats=stats
+                )
+                
+                if profile_path:
+                    dev_profiles_updated += 1
+                    logger.info(f"✅ Developer profile updated: {developer_name}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to update profile for {developer_name}: {e}")
+        
+        logger.info(f"\n✅ Total developer profiles updated: {dev_profiles_updated}")
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to generate developer profiles: {e}")
+        # Don't fail the whole setup if developer profiles fail
+        logger.warning("⚠️ Continuing without developer profiles")
+    
     
     # Step 3: Create vector store
     logger.info("\n" + "=" * 80)
@@ -199,7 +256,8 @@ def update_profiles_mode(repo: str):
         data = fetcher.fetch_repository_reviewer_data(
             owner=owner,
             repo=repo_name,
-            max_prs=50  # Only fetch recent PRs for updates
+            max_prs_to_fetch=50,  # Only fetch recent PRs for updates
+            storage=profile_storage
         )
         
         # Update profiles
@@ -278,8 +336,8 @@ Examples:
     parser.add_argument(
         '--port',
         type=int,
-        default=int(os.getenv('WEBHOOK_PORT', '5000')),
-        help='Port for webhook server (default: 5000)'
+        default=int(os.getenv('PORT', os.getenv('WEBHOOK_PORT', '5000'))),
+        help='Port for webhook server (default: 5000, Railway uses PORT env var)'
     )
     
     parser.add_argument(
