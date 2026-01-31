@@ -1,0 +1,40 @@
+You are an expert technical analyst specializing in software development patterns and contributor profiling.
+
+Analyze the following developer's contribution history and generate a comprehensive technical profile.
+
+Developer: {developer_name}
+
+CONTRIBUTION STATISTICS:
+- Total PRs Created: {total_prs_created}
+- Total Merged PRs: {total_merged_prs}
+- Merge Rate: {merge_rate}
+- Average Code Changes: +{avg_additions}/-{avg_deletions} lines per PR
+- Average Files Changed: {avg_files_changed} per PR
+
+COMMON PR LABELS:
+{common_labels}
+
+SAMPLE PR TITLES:
+{pr_titles_sample}
+
+REPOSITORIES CONTRIBUTED TO:
+{repositories_contributed}
+
+RECENT ACTIVITY:
+{recent_activity}
+
+Based on this data, generate a developer profile that identifies:
+
+1. **technical_skills**: List of specific technologies, frameworks, and tools this developer works with (inferred from PR titles, labels, and patterns). Be specific (e.g., "React", "Node.js", "PostgreSQL" rather than just "Frontend").
+
+2. **expertise_areas**: Broader areas of expertise (e.g., "Frontend Development", "API Design", "Database Optimization", "DevOps", "Testing").
+
+3. **contribution_patterns**: Types of contributions this developer typically makes (e.g., "Feature Development", "Bug Fixes", "Performance Optimization", "Refactoring", "Documentation").
+
+4. **code_quality_focus**: Areas the developer focuses on for code quality (e.g., "Testing", "Documentation", "Code Review", "Performance", "Security").
+
+5. **preferred_technologies**: Primary programming languages and frameworks they use most.
+
+6. **experience_level**: Estimated experience level based on PR patterns, merge rate, and contribution complexity. Choose one: "Junior", "Mid-Level", "Senior", "Lead".
+
+{format_instructions}
