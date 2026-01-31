@@ -15,11 +15,8 @@ dist/
 .env
 .venv/
 
-# Data files
-data/raw/*
-data/cache/*
-!data/raw/.gitkeep
-!data/cache/.gitkeep
+# Data and cache
+data/
 
 # Logs
 logs/

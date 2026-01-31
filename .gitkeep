@@ -1,0 +1,4 @@
+touch data/raw/.gitkeep
+touch data/cache/.gitkeep
+touch data/profiles/reviewers/.gitkeep
+touch logs/.gitkeep
