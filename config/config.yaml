@@ -1,13 +1,8 @@
 # GitHub Reviewer AI - Configuration
 
 github:
-    # Repositories to monitor (add more as needed)
-    repositories:
-        - owner: 'Abidstic'
-          name: 'express'
-
     # Data fetching settings
-    max_prs_to_fetch: 500
+    max_prs_to_fetch: null # null = fetch all PRs (use for initial setup)
     api_rate_limit_delay: 0.3 # seconds between API calls
 
     # Webhook settings
@@ -28,7 +23,7 @@ llm:
 profile_generation:
     batch_size: 15 # profiles to generate at once
     delay_between_profiles: 2 # seconds
-    min_reviews_for_profile: 2 # minimum reviews to create profile
+    min_reviews_for_profile: 1 # minimum reviews to create profile
     checkpoint_enabled: true
 
     # JavaScript skill categories (from your notebooks)
@@ -54,7 +49,7 @@ profile_generation:
 reviewer_assignment:
     top_k_similar_prs: 5 # number of similar PRs to find
     top_k_reviewers: 3 # number of reviewers to suggest
-    min_confidence_score: 0.4 # minimum match score
+    min_confidence_score: 0.2 # minimum score to be suggested
     exclude_pr_author: true
 
     # Scoring weights for hybrid matching
