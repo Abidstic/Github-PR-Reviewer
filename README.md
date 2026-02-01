@@ -2,6 +2,13 @@
 
 AI-powered code reviewer assignment system using **Frequency-Weighted Skill Matching** and **Knowledge Unit (KU)** indexing.
 
+## For initial setup
+curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
+  -H "Content-Type: application/json" \
+  -d '{"repo": "owner/repo-name"}'
+
+  change the owner and repo name after that the webhook should get all the new prs.
+
 ## 🌟 Modern Architecture
 
 This system moves beyond simple keyword matching. It uses LLMs to extract structural expertise from historical reviews, categorizing them into defined Knowledge Units (KUs).
