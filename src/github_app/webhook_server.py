@@ -28,7 +28,32 @@ handler = WebhookHandler(webhook_secret=WEBHOOK_SECRET)
 
 logger.info("🌐 Webhook Server initialized")
 
+@app.route('/admin/setup', methods=['POST'])
+def trigger_setup():
+    """Trigger setup for a repository"""
+    import threading
+    from app import setup_mode
+    
+    data = request.get_json()
+    repo = data.get('repo')  # Format: "owner/repo"
+    
+    if not repo:
+        return {"error": "repo required in format owner/repo"}, 400
+    
+    # Run setup in background thread
+    def run_setup():
+        try:
+            setup_mode(repo=repo)
+            logger.info(f"Setup completed for {repo}")
+        except Exception as e:
+            logger.error(f"Setup failed for {repo}: {e}")
+    
+    threading.Thread(target=run_setup, daemon=True).start()
+    
+    return {"status": "setup started", "repo": repo}, 202
 
+
+    
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Main webhook endpoint"""

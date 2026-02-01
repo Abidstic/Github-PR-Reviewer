@@ -58,4 +58,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Run with gunicorn for production
-CMD gunicorn --bind 0.0.0.0:${PORT} --workers 2 --timeout 300 src.github_app.webhook_server:app
+CMD ["sh", "-c", "python app.py --mode webhook --host 0.0.0.0 --port $PORT"]
