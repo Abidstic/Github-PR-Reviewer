@@ -1,6 +1,5 @@
 # Multi-stage build for optimized image size
 FROM python:3.10-slim as builder
-
 WORKDIR /app
 
 # Install build dependencies
@@ -25,7 +24,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Production stage
 FROM python:3.10-slim
-
 WORKDIR /app
 
 # Install runtime dependencies
@@ -48,14 +46,13 @@ RUN mkdir -p data/cache data/profiles/reviewers data/profiles/developers data/ra
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=5000
 
 # Expose port (Railway uses $PORT)
-EXPOSE ${PORT}
+EXPOSE 5000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+CMD curl -f http://localhost:${PORT:-5000}/health || exit 1
 
-# Run with gunicorn for production
-CMD ["sh", "-c", "python app.py --mode webhook --host 0.0.0.0 --port $PORT"]
+# Run application
+CMD python app.py --mode webhook
