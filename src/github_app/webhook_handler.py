@@ -27,8 +27,6 @@ class WebhookHandler:
         """
         self.config = get_config()
         self.webhook_secret = webhook_secret
-        self.pipeline = AssignmentPipeline()
-        self.github = GitHubClient()
         
         logger.info("✅ Webhook Handler initialized")
 
@@ -39,32 +37,19 @@ class WebhookHandler:
         signature: Optional[str] = None,
         payload_body: Optional[bytes] = None
     ) -> Dict:
-        """
-        Route and handle incoming event
-        
-        Args:
-            event_type: Value of X-GitHub-Event header
-            payload: Parsed JSON payload
-            signature: Value of X-Hub-Signature-256 header
-            payload_body: Raw request body (needed for signature verification)
-            
-        Returns:
-            Response dictionary with status and message
-        """
+        """Route and handle incoming event"""
         # Verify signature if secret is provided
         if self.webhook_secret and signature:
             if not self._verify_signature(payload_body, signature):
                 logger.error("❌ Invalid webhook signature")
-                return {
-                    'status': 'error',
-                    'message': 'Invalid signature'
-                }
+                return {'status': 'error', 'message': 'Invalid signature'}
         
-        logger.info(f"📨 Received webhook: event_type={event_type}")
+        installation_id = payload.get('installation', {}).get('id')
+        logger.info(f"📨 Received webhook: event_type={event_type}, installation_id={installation_id}")
         
         # Route to specific handler
         if event_type == 'pull_request':
-            return self.handle_pull_request_event(payload)
+            return self.handle_pull_request_event(payload, installation_id)
         elif event_type == 'installation':
             return self.handle_installation_event(payload)
         elif event_type == 'ping':
@@ -93,7 +78,7 @@ class WebhookHandler:
         
         return hmac.compare_digest(expected_signature, signature)
 
-    def handle_pull_request_event(self, payload: Dict) -> Dict:
+    def handle_pull_request_event(self, payload: Dict, installation_id: Optional[int] = None) -> Dict:
         """Process pull_request event"""
         action = payload.get('action')
         pr_data_raw = payload.get('pull_request', {})
@@ -101,57 +86,31 @@ class WebhookHandler:
         
         logger.info(f"📥 Received pull_request event: action={action}")
         
-        # Only process 'opened' and 'reopened' events
         if action not in ['opened', 'reopened']:
-            logger.info(f"ℹ️ Ignoring action: {action}")
-            return {
-                'status': 'ignored',
-                'message': f'Action {action} is not processed'
-            }
+            return {'status': 'ignored', 'message': f'Action {action} is not processed'}
         
-        # Extract PR data
-        pr_data = self._extract_pr_data(pr_data_raw, repo_data)
+        if pr_data_raw.get('draft', False):
+            return {'status': 'skipped', 'message': 'Draft PRs are not processed'}
+
+        # Create an installation-specific GitHub client to fetch PR files
+        github_client = GitHubClient(installation_id=installation_id)
+        pr_data = self._extract_pr_data(pr_data_raw, repo_data, github_client)
         
         if not pr_data:
-            logger.error("❌ Failed to extract PR data")
-            return {
-                'status': 'error',
-                'message': 'Failed to extract PR data'
-            }
+            return {'status': 'error', 'message': 'Failed to extract PR data'}
         
         pr_number = pr_data['pr_number']
         repo_name = pr_data['repo_name']
-        
         logger.info(f"🔄 Processing PR #{pr_number} from {repo_name}")
-        
-        # Skip if it's a draft
-        if pr_data.get('is_draft'):
-            logger.info(f"ℹ️ Skipping PR #{pr_number} (Draft)")
-            return {
-                'status': 'skipped',
-                'message': 'Draft PRs are not processed'
-            }
             
-        # Process through pipeline
         try:
-            result = self.pipeline.process_pr(
-                pr_data=pr_data,
-                post_to_github=True,
-                dry_run=False
-            )
-            
-            return {
-                'status': 'success',
-                'message': f'Suggestions posted to PR #{pr_number}',
-                'repo': repo_name,
-                'pr': pr_number
-            }
+            # Create a fresh pipeline with this installation's token for posting
+            pipeline = AssignmentPipeline(installation_id=installation_id)
+            pipeline.process_pr(pr_data=pr_data, post_to_github=True, dry_run=False)
+            return {'status': 'success', 'message': f'Suggestions posted to PR #{pr_number}', 'repo': repo_name, 'pr': pr_number}
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}")
-            return {
-                'status': 'error',
-                'message': f'Failed to process PR: {str(e)}'
-            }
+            return {'status': 'error', 'message': f'Failed to process PR: {str(e)}'}
 
     def handle_installation_event(self, payload: Dict) -> Dict:
         """Handle App installation/removal"""
@@ -173,26 +132,23 @@ class WebhookHandler:
             'hook_id': payload.get('hook_id', 'unknown')
         }
 
-    def _extract_pr_data(self, pr_data_raw: Dict, repo_data: Dict) -> Optional[Dict]:
+    def _extract_pr_data(self, pr_data_raw: Dict, repo_data: Dict, github_client: GitHubClient) -> Optional[Dict]:
         """Extract needed fields from GitHub PR payload"""
         try:
             pr_number = pr_data_raw.get('number')
             owner = repo_data.get('owner', {}).get('login')
             repo = repo_data.get('name')
             
-            # Fetch files because they don't come in the webhook payload
             logger.info(f"🔍 Fetching file changes for PR #{pr_number}")
-            files = self.github.get_pr_files(owner, repo, pr_number)
-            changed_files = [f.get('filename') for f in files]
+            files = github_client.get_pr_files(owner, repo, pr_number)
+            changed_files = [f.get('filename') for f in files] if files else []
             logger.info(f"✅ Found {len(changed_files)} changed files")
 
             return {
                 'pr_number': pr_number,
                 'title': pr_data_raw.get('title'),
                 'description': pr_data_raw.get('body', ''),
-                'author': {
-                    'username': pr_data_raw.get('user', {}).get('login')
-                },
+                'author': {'username': pr_data_raw.get('user', {}).get('login')},
                 'repo_name': repo_data.get('full_name'),
                 'changed_files': changed_files,
                 'additions': pr_data_raw.get('additions', 0),

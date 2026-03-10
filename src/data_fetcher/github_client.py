@@ -7,6 +7,8 @@ import time
 import urllib.request
 import urllib.parse
 import json
+import jwt
+import os
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -16,35 +18,78 @@ logger = get_logger(__name__)
 
 
 class GitHubClient:
-    """GitHub API client with authentication and rate limiting"""
+    """GitHub API client with authentication (App or Personal Token) and rate limiting"""
     
-    def __init__(self, api_token: Optional[str] = None):
+    def __init__(self, api_token: Optional[str] = None, installation_id: Optional[int] = None):
         """
         Initialize GitHub API client
         
         Args:
-            api_token: GitHub personal access token (from .env if not provided)
+            api_token: GitHub personal access token (optional)
+            installation_id: GitHub App installation ID (for app auth)
         """
         self.config = get_config()
-        
-        # Get API token
-        if api_token is None:
-            import os
-            api_token = os.getenv('GITHUB_TOKEN')
-        
-        if not api_token:
-            raise ValueError(
-                "GitHub token not provided. "
-                "Set GITHUB_TOKEN in .env or pass api_token parameter"
-            )
-        
-        self.api_token = api_token
         self.base_url = "https://api.github.com"
+        self.installation_id = installation_id
+        
+        # Priority:
+        # 1. Direct api_token passed to constructor
+        # 2. installation_id (will generate token via App ID + Private Key)
+        # 3. GITHUB_TOKEN environment variable
+        
+        self.api_token = api_token or os.getenv('GITHUB_TOKEN')
+        self.app_id = os.getenv('GITHUB_APP_ID')
+        # Support both: full key content (Railway) or file path (local)
+        self.private_key = os.getenv('GITHUB_PRIVATE_KEY') or self._read_key_from_path()
+
+        if not self.api_token and self.installation_id and self.app_id and self.private_key:
+            self._refresh_installation_token()
+        
+        if not self.api_token:
+            logger.warning("⚠️ No GitHub token or App credentials provided. Client may fail.")
         
         # Rate limiting settings from config
         self.rate_limit_delay = self.config.get('github.api_rate_limit_delay', 0.3)
         
-        logger.info("✅ GitHub API client initialized")
+        logger.info(f"✅ GitHub API client initialized (Auth: {'App' if self.installation_id else 'Token'})")
+
+    def _read_key_from_path(self) -> Optional[str]:
+        """Fallback: read private key from file path (for local dev)"""
+        path = os.getenv('GITHUB_PRIVATE_KEY_PATH')
+        if path:
+            try:
+                with open(path, 'r') as f:
+                    return f.read()
+            except Exception:
+                pass
+        return None
+
+    def _refresh_installation_token(self):
+        """Exchange App JWT for an installation-specific access token"""
+        try:
+            # Generate JWT using private key content
+            now = int(time.time())
+            payload = {
+                'iat': now - 60,
+                'exp': now + (10 * 60),
+                'iss': self.app_id
+            }
+            app_jwt = jwt.encode(payload, self.private_key, algorithm='RS256')
+
+            # Exchange JWT for installation token
+            url = f"{self.base_url}/app/installations/{self.installation_id}/access_tokens"
+            req = urllib.request.Request(url, method='POST')
+            req.add_header('Authorization', f'Bearer {app_jwt}')
+            req.add_header('Accept', 'application/vnd.github+json')
+            
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                self.api_token = data['token']
+                logger.info(f"🔑 Got installation token for ID: {self.installation_id}")
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to refresh installation token: {e}")
+            raise
     
     @retry_on_failure(max_attempts=3, delay=2.0, backoff=2.0)
     @rate_limit(calls_per_second=3.0)  # GitHub allows ~5000 requests/hour

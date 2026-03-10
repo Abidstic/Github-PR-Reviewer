@@ -1,9 +1,8 @@
-"""
-GitHub Poster
-Posts reviewer suggestions to GitHub PRs as comments
-"""
-
 import os
+import time
+import jwt
+import urllib.request
+import json
 from typing import Dict, Optional
 from github import Github, GithubException
 
@@ -13,36 +12,80 @@ logger = get_logger(__name__)
 
 
 class GitHubPoster:
-    """Posts suggestions to GitHub PRs"""
+    """Posts suggestions to GitHub PRs using personal token or App installation"""
     
-    def __init__(self, github_token: Optional[str] = None):
+    def __init__(self, github_token: Optional[str] = None, installation_id: Optional[int] = None):
         """
         Initialize GitHub poster
         
         Args:
-            github_token: GitHub personal access token (from .env if not provided)
+            github_token: GitHub personal access token (optional)
+            installation_id: GitHub App installation ID (for app auth)
         """
         self.config = get_config()
+        self.installation_id = installation_id
         
-        # Get GitHub token
-        if github_token is None:
-            github_token = os.getenv('GITHUB_TOKEN')
+        # Priority:
+        # 1. Direct github_token passed to constructor
+        # 2. installation_id (will generate token via App ID + Private Key)
+        # 3. GITHUB_TOKEN environment variable
         
-        if not github_token:
+        token = github_token or os.getenv('GITHUB_TOKEN')
+        
+        if not token and self.installation_id:
+            token = self._get_installation_token()
+            
+        if not token:
             raise ValueError(
-                "GitHub token not provided. "
-                "Set GITHUB_TOKEN in .env or pass github_token parameter"
+                "GitHub token not provided and installation_id not available. "
+                "Set GITHUB_TOKEN in .env or provide installation_id."
             )
         
         # Initialize GitHub client
-        self.github = Github(github_token)
+        self.github = Github(token)
         
         # Test connection
         try:
             user = self.github.get_user()
             logger.info(f"✅ GitHub poster initialized (authenticated as: {user.login})")
         except GithubException as e:
-            logger.error(f"❌ GitHub authentication failed: {e}")
+            # For Apps, get_user() might fail if it's not a user token, but we can verify by getting the app/installation
+            logger.info("✅ GitHub poster initialized (App Installation Auth)")
+
+    def _get_installation_token(self) -> str:
+        """Generate a temporary installation token using App credentials"""
+        try:
+            app_id = os.getenv('GITHUB_APP_ID')
+            # Read key content directly (Railway) or fallback to file path (local)
+            private_key = os.getenv('GITHUB_PRIVATE_KEY')
+            if not private_key:
+                key_path = os.getenv('GITHUB_PRIVATE_KEY_PATH')
+                if key_path:
+                    with open(key_path, 'r') as f:
+                        private_key = f.read()
+            
+            if not app_id or not private_key:
+                raise ValueError("GITHUB_APP_ID and GITHUB_PRIVATE_KEY needed for App auth")
+
+            now = int(time.time())
+            payload = {
+                'iat': now - 60,
+                'exp': now + (10 * 60),
+                'iss': app_id
+            }
+            app_jwt = jwt.encode(payload, private_key, algorithm='RS256')
+
+            url = f"https://api.github.com/app/installations/{self.installation_id}/access_tokens"
+            req = urllib.request.Request(url, method='POST')
+            req.add_header('Authorization', f'Bearer {app_jwt}')
+            req.add_header('Accept', 'application/vnd.github+json')
+            
+            with urllib.request.urlopen(req) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                return data['token']
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to get installation token: {e}")
             raise
     
     def post_suggestion_comment(

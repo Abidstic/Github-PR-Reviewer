@@ -26,3 +26,7 @@ gunicorn==21.2.0
 
 # Validation
 pydantic==2.7.4
+
+# GitHub App Auth
+PyJWT==2.8.0
+cryptography==42.0.5

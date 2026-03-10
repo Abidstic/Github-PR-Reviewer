@@ -23,16 +23,19 @@ class AssignmentPipeline:
     def __init__(
         self,
         github_token: Optional[str] = None,
+        installation_id: Optional[int] = None,
         load_vector_store: bool = True
     ):
         """
         Initialize assignment pipeline
         
         Args:
-            github_token: GitHub token (from .env if not provided)
+            github_token: GitHub token (optional)
+            installation_id: GitHub App installation ID (for app auth)
             load_vector_store: Whether to load existing vector store
         """
         self.config = get_config()
+        self.installation_id = installation_id
         
         logger.info("🚀 Initializing Assignment Pipeline...")
         
