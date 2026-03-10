@@ -23,18 +23,20 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def setup_mode(repo: str, max_prs: int = None):
+def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
     """
     Initial setup: Fetch data, generate profiles, create vector store
     
     Args:
         repo: Repository in format 'owner/repo'
         max_prs: Maximum number of PRs to fetch (uses config default if None)
+        installation_id: GitHub App installation ID (uses GITHUB_TOKEN if not provided)
     """
     from src.data_fetcher.reviewer_data_fetcher import ReviewerDataFetcher
     from src.profile_generator.reviewer_profile_builder import ReviewerProfileBuilder
     from src.profile_generator.profile_storage import ProfileStorage
     from src.reviewer_assigner.assignment_pipeline import AssignmentPipeline
+    from src.data_fetcher.github_client import GitHubClient
     
     logger.info("=" * 80)
     logger.info("🚀 GITHUB REVIEWER AI - SETUP MODE")
@@ -49,6 +51,7 @@ def setup_mode(repo: str, max_prs: int = None):
     
     logger.info(f"📦 Repository: {owner}/{repo_name}")
     logger.info(f"📊 Max PRs: {max_prs or 'config default'}")
+    logger.info(f"🔑 Auth: {'App installation ' + str(installation_id) if installation_id else 'GITHUB_TOKEN'}")
     
     # Step 1: Fetch reviewer data
     logger.info("\n" + "=" * 80)
@@ -57,7 +60,9 @@ def setup_mode(repo: str, max_prs: int = None):
     
     try:
         profile_storage = ProfileStorage()
-        fetcher = ReviewerDataFetcher()
+        # Use installation_id if provided, otherwise fall back to GITHUB_TOKEN
+        github_client = GitHubClient(installation_id=installation_id)
+        fetcher = ReviewerDataFetcher(github_client=github_client)
         
         # Pass storage to handle PR-level checkpointing
         data = fetcher.fetch_repository_reviewer_data(

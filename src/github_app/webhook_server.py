@@ -36,6 +36,7 @@ def trigger_setup():
     
     data = request.get_json()
     repo = data.get('repo')  # Format: "owner/repo"
+    installation_id = data.get('installation_id')  # Optional: use App auth instead of GITHUB_TOKEN
     
     if not repo:
         return {"error": "repo required in format owner/repo"}, 400
@@ -43,7 +44,7 @@ def trigger_setup():
     # Run setup in background thread
     def run_setup():
         try:
-            setup_mode(repo=repo)
+            setup_mode(repo=repo, installation_id=installation_id)
             logger.info(f"Setup completed for {repo}")
         except Exception as e:
             logger.error(f"Setup failed for {repo}: {e}")
