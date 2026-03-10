@@ -23,6 +23,41 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
+def _get_installation_id_for_repo(owner: str, repo_name: str) -> int:
+    """
+    Look up the GitHub App installation ID for a given repo.
+    Uses the App JWT (APP_ID + PRIVATE_KEY) — no personal token needed.
+    """
+    import time
+    import jwt as pyjwt
+    import urllib.request
+    import json
+
+    app_id = os.getenv('GITHUB_APP_ID')
+    private_key = os.getenv('GITHUB_PRIVATE_KEY')
+    if not private_key:
+        key_path = os.getenv('GITHUB_PRIVATE_KEY_PATH')
+        if key_path:
+            with open(key_path, 'r') as f:
+                private_key = f.read()
+
+    if not app_id or not private_key:
+        raise ValueError("GITHUB_APP_ID and GITHUB_PRIVATE_KEY must be set")
+
+    now = int(time.time())
+    payload = {'iat': now - 60, 'exp': now + (10 * 60), 'iss': app_id}
+    app_jwt = pyjwt.encode(payload, private_key, algorithm='RS256')
+
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/installation"
+    req = urllib.request.Request(url)
+    req.add_header('Authorization', f'Bearer {app_jwt}')
+    req.add_header('Accept', 'application/vnd.github+json')
+
+    with urllib.request.urlopen(req) as response:
+        data = json.loads(response.read().decode('utf-8'))
+        return data['id']
+
+
 def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
     """
     Initial setup: Fetch data, generate profiles, create vector store
@@ -51,7 +86,14 @@ def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
     
     logger.info(f"📦 Repository: {owner}/{repo_name}")
     logger.info(f"📊 Max PRs: {max_prs or 'config default'}")
-    logger.info(f"🔑 Auth: {'App installation ' + str(installation_id) if installation_id else 'GITHUB_TOKEN'}")
+
+    # Auto-lookup installation_id from repo if not provided
+    if not installation_id:
+        try:
+            installation_id = _get_installation_id_for_repo(owner, repo_name)
+            logger.info(f"🔑 Auto-resolved installation_id: {installation_id}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not auto-resolve installation_id ({e}), falling back to GITHUB_TOKEN")
     
     # Step 1: Fetch reviewer data
     logger.info("\n" + "=" * 80)
@@ -60,7 +102,6 @@ def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
     
     try:
         profile_storage = ProfileStorage()
-        # Use installation_id if provided, otherwise fall back to GITHUB_TOKEN
         github_client = GitHubClient(installation_id=installation_id)
         fetcher = ReviewerDataFetcher(github_client=github_client)
         
