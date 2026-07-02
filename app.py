@@ -298,6 +298,11 @@ def update_profiles_mode(repo: str):
     # Fetch latest data
     logger.info("\n🔄 Fetching latest PR data...")
     try:
+        # Initialize storage and builder BEFORE they are used (storage is passed
+        # into the fetcher for checkpointing, so it must exist first).
+        profile_storage = ProfileStorage()
+        profile_builder = ReviewerProfileBuilder()
+
         fetcher = ReviewerDataFetcher()
         data = fetcher.fetch_repository_reviewer_data(
             owner=owner,
@@ -305,11 +310,7 @@ def update_profiles_mode(repo: str):
             max_prs_to_fetch=50,  # Only fetch recent PRs for updates
             storage=profile_storage
         )
-        
-        # Update profiles
-        profile_builder = ReviewerProfileBuilder()
-        profile_storage = ProfileStorage()
-        
+
         reviewer_stats = data.get('reviewer_stats', {})
         updated = 0
         

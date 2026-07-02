@@ -17,6 +17,23 @@ logger = get_logger(__name__)
 
 
 # ============================================================================
+# Data Directory (persistent volume aware)
+# ============================================================================
+
+def get_data_dir() -> Path:
+    """
+    Root directory for all persistent data (SQLite DB, JSON profiles, FAISS index).
+
+    Reads the DATA_DIR environment variable so the app can point at a Railway
+    persistent volume mount (e.g. /data). Falls back to a local ./data folder
+    for development. The directory is created if it does not exist.
+    """
+    data_dir = Path(os.getenv('DATA_DIR', 'data'))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+
+# ============================================================================
 # File I/O Helpers
 # ============================================================================
 

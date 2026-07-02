@@ -43,3 +43,8 @@ private-key.pem
 # Temporary files
 *.tmp
 temp/
+
+# Claude / AI assistant files
+CLAUDE.md
+.claude/
+.claude*

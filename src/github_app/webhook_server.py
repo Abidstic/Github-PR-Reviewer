@@ -4,6 +4,7 @@ Flask server to receive GitHub webhook events
 """
 
 import os
+import threading
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 
@@ -23,6 +24,9 @@ logger = get_logger(__name__)
 # Get webhook secret
 WEBHOOK_SECRET = os.getenv('GITHUB_WEBHOOK_SECRET')
 
+# Shared secret protecting the /admin/setup endpoint (sent as X-Admin-Secret)
+ADMIN_SECRET = os.getenv('ADMIN_SECRET')
+
 # Initialize handler
 handler = WebhookHandler(webhook_secret=WEBHOOK_SECRET)
 
@@ -30,17 +34,29 @@ logger.info("🌐 Webhook Server initialized")
 
 @app.route('/admin/setup', methods=['POST'])
 def trigger_setup():
-    """Trigger setup for a repository"""
-    import threading
+    """Trigger setup for a repository (protected by ADMIN_SECRET)."""
     from app import setup_mode
-    
-    data = request.get_json()
+
+    # Auth: if ADMIN_SECRET is configured, require a matching header.
+    # Warn-and-allow if it is not set, so existing deployments keep working.
+    if ADMIN_SECRET:
+        provided = request.headers.get('X-Admin-Secret')
+        if not provided or provided != ADMIN_SECRET:
+            logger.warning("🚫 Rejected /admin/setup - missing/invalid X-Admin-Secret")
+            return {"error": "unauthorized"}, 401
+    else:
+        logger.warning(
+            "⚠️ ADMIN_SECRET not set - /admin/setup is UNPROTECTED. "
+            "Set ADMIN_SECRET to prevent anyone from triggering setup."
+        )
+
+    data = request.get_json(silent=True) or {}
     repo = data.get('repo')  # Format: "owner/repo"
     installation_id = data.get('installation_id')  # Optional: use App auth instead of GITHUB_TOKEN
-    
+
     if not repo:
         return {"error": "repo required in format owner/repo"}, 400
-    
+
     # Run setup in background thread
     def run_setup():
         try:
@@ -48,9 +64,9 @@ def trigger_setup():
             logger.info(f"Setup completed for {repo}")
         except Exception as e:
             logger.error(f"Setup failed for {repo}: {e}")
-    
+
     threading.Thread(target=run_setup, daemon=True).start()
-    
+
     return {"status": "setup started", "repo": repo}, 202
 
 
@@ -69,39 +85,38 @@ def webhook():
     # Get payload
     payload = request.json
     payload_body = request.data
-    
+
     if not payload:
         logger.error("❌ Empty payload received")
         return jsonify({'error': 'Empty payload'}), 400
-    
-    # Handle event
-    try:
-        response = handler.handle_event(
-            event_type=event_type,
-            payload=payload,
-            signature=signature,
-            payload_body=payload_body
-        )
-        
-        # Log response
-        status = response.get('status', 'unknown')
-        message = response.get('message', '')
-        logger.info(f"✅ Webhook handled: status={status}, message={message}")
-        
-        # Return appropriate HTTP status
-        if status == 'success':
-            return jsonify(response), 200
-        elif status == 'ignored' or status == 'skipped':
-            return jsonify(response), 200
-        else:
-            return jsonify(response), 500
-            
-    except Exception as e:
-        logger.error(f"❌ Webhook handling failed: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+
+    # 1. Verify signature SYNCHRONOUSLY so we can reject forged events with 401.
+    if not handler.is_signature_valid(payload_body, signature):
+        return jsonify({'status': 'error', 'message': 'Invalid signature'}), 401
+
+    # 2. Process the event in a background thread and ACK immediately.
+    #    GitHub requires a response within ~10s; LLM analysis + matching can
+    #    take much longer, so doing it inline risks timeouts and webhook
+    #    redelivery (which would create duplicate work). We return 202 now and
+    #    let the worker post the suggestion when it finishes.
+    def process_in_background():
+        try:
+            response = handler.handle_event(
+                event_type=event_type,
+                payload=payload,
+                signature=signature,
+                payload_body=payload_body
+            )
+            logger.info(
+                f"✅ Webhook processed: status={response.get('status')}, "
+                f"message={response.get('message')}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Background webhook processing failed: {e}")
+
+    threading.Thread(target=process_in_background, daemon=True).start()
+
+    return jsonify({'status': 'accepted', 'message': 'Processing in background'}), 202
 
 
 @app.route('/health', methods=['GET'])

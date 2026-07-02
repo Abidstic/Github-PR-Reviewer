@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from src.data_fetcher.github_client import GitHubClient
-from src.utils import get_logger, get_config, save_json, get_timestamp
+from src.utils import get_logger, get_config, save_json, get_timestamp, get_data_dir
 
 logger = get_logger(__name__)
 
@@ -510,19 +510,22 @@ class ReviewerDataFetcher:
         return dict(developer_profiles)
     
     
-    def save_to_file(self, data: Dict, owner: str, repo: str, output_dir: str = "data/raw/reviewers"):
+    def save_to_file(self, data: Dict, owner: str, repo: str, output_dir: Optional[str] = None):
         """
         Save reviewer data to JSON file
-        
+
         Args:
             data: Reviewer data dictionary
             owner: Repository owner
             repo: Repository name
-            output_dir: Output directory
-        
+            output_dir: Output directory (defaults to <DATA_DIR>/raw/reviewers
+                        so raw data lives on the persistent volume)
+
         Returns:
             Path to saved file
         """
+        if output_dir is None:
+            output_dir = str(get_data_dir() / "raw" / "reviewers")
         timestamp = get_timestamp()
         filename = f"{owner}_{repo}_reviewer_data_{timestamp}.json"
         filepath = f"{output_dir}/{filename}"

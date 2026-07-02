@@ -61,6 +61,28 @@ class WebhookHandler:
                 'message': f'Event type {event_type} is not processed'
             }
 
+    def is_signature_valid(self, payload_body: bytes, signature: Optional[str]) -> bool:
+        """
+        Public signature check used by the route before accepting a webhook.
+
+        Behaviour (warn-and-allow):
+        - If no webhook secret is configured, log a loud warning and ALLOW the
+          request (keeps an existing deployment working until the secret is set).
+        - If a secret IS configured, require a valid signature.
+        """
+        if not self.webhook_secret:
+            logger.warning(
+                "⚠️ GITHUB_WEBHOOK_SECRET not set - accepting webhook WITHOUT "
+                "signature verification. Set it in production to reject forged events."
+            )
+            return True
+
+        if not signature:
+            logger.error("❌ Webhook secret is configured but request has no signature")
+            return False
+
+        return self._verify_signature(payload_body, signature)
+
     def _verify_signature(self, payload_body: bytes, signature: str) -> bool:
         """Verify GitHub webhook signature"""
         if not self.webhook_secret or not signature:

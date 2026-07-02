@@ -27,7 +27,7 @@ except ImportError:
             self.page_content = page_content
             self.metadata = metadata or {}
 
-from src.utils import get_logger, get_config
+from src.utils import get_logger, get_config, get_data_dir
 
 logger = get_logger(__name__)
 
@@ -35,21 +35,23 @@ logger = get_logger(__name__)
 class SimilarityMatcher:
     """Finds similar PRs using vector embeddings"""
     
-    def __init__(self, cache_dir: str = "data/cache"):
+    def __init__(self, cache_dir: Optional[str] = None):
         """
         Initialize similarity matcher
-        
+
         Args:
-            cache_dir: Directory to cache vector stores
+            cache_dir: Directory to cache vector stores (defaults to
+                       <DATA_DIR>/cache so the FAISS index lives on the
+                       persistent volume)
         """
         if not EMBEDDINGS_AVAILABLE:
             raise ImportError(
                 "Embeddings not available. Install with: "
                 "pip install sentence-transformers faiss-cpu torch"
             )
-        
+
         self.config = get_config()
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = Path(cache_dir) if cache_dir else get_data_dir() / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize embeddings model
@@ -233,16 +235,19 @@ Comment Authors: {', '.join(comment_authors)}
             Dictionary of {reviewer_name: aggregated_score}
         """
         reviewer_scores = {}
-        
-        for doc, similarity_score in similar_prs:
+
+        for doc, distance in similar_prs:
             reviewers = doc.metadata.get('reviewers', [])
-            
-            # Weight by similarity score
+
+            # FAISS returns L2 *distance* (lower = more similar), so we must
+            # convert it to a similarity weight before accumulating. Summing the
+            # raw distance would reward reviewers on the LEAST similar PRs.
+            similarity_weight = 1.0 / (1.0 + distance)
             for reviewer in reviewers:
                 if reviewer in reviewer_scores:
-                    reviewer_scores[reviewer] += similarity_score
+                    reviewer_scores[reviewer] += similarity_weight
                 else:
-                    reviewer_scores[reviewer] = similarity_score
+                    reviewer_scores[reviewer] = similarity_weight
         
         # Sort by score
         sorted_reviewers = dict(

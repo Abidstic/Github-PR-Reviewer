@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
-from src.utils import get_logger, get_config, save_json, load_json
+from src.utils import get_logger, get_config, save_json, load_json, get_data_dir
 
 logger = get_logger(__name__)
 
@@ -17,17 +17,19 @@ logger = get_logger(__name__)
 class ProfileStorage:
     """Manages profile storage in JSON and SQLite"""
     
-    def __init__(self, db_path: str = "data/cache/reviewers.db", json_dir: str = "data/profiles/reviewers"):
+    def __init__(self, db_path: Optional[str] = None, json_dir: Optional[str] = None):
         """
         Initialize profile storage
-        
+
         Args:
-            db_path: Path to SQLite database
-            json_dir: Directory for JSON profile files
+            db_path: Path to SQLite database (defaults to <DATA_DIR>/cache/reviewers.db)
+            json_dir: Directory for JSON profile files (defaults to
+                      <DATA_DIR>/profiles/reviewers)
         """
         self.config = get_config()
-        self.db_path = Path(db_path)
-        self.json_dir = Path(json_dir)
+        data_dir = get_data_dir()
+        self.db_path = Path(db_path) if db_path else data_dir / "cache" / "reviewers.db"
+        self.json_dir = Path(json_dir) if json_dir else data_dir / "profiles" / "reviewers"
         
         # Create directories
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -35,12 +37,29 @@ class ProfileStorage:
         
         # Initialize database
         self._init_database()
-        
+
         logger.info(f"✅ Profile storage initialized (DB: {self.db_path}, JSON: {self.json_dir})")
-    
+
+    def _connect(self) -> sqlite3.Connection:
+        """
+        Open a SQLite connection with concurrency-safe settings.
+
+        WAL (Write-Ahead Logging) lets readers and writers proceed without
+        blocking each other, and busy_timeout makes a connection wait for a
+        lock to clear instead of immediately raising 'database is locked'.
+        This is important on Railway where multiple webhooks may hit the DB
+        at the same time. journal_mode=WAL is persisted in the DB file, but we
+        set it on every connection for safety; busy_timeout is per-connection.
+        """
+        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
     def _init_database(self):
         """Initialize database schema"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         # Table 1: Reviewer Profiles (main table)
@@ -171,7 +190,7 @@ class ProfileStorage:
         stats = profile_data.get('stats', {})
         profile = profile_data.get('profile', {})
         
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         try:
@@ -265,7 +284,7 @@ class ProfileStorage:
     
     def _get_from_database(self, reviewer_name: str) -> Optional[Dict]:
         """Get profile from SQLite"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -309,7 +328,7 @@ class ProfileStorage:
         Returns:
             List of reviewer usernames
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         if repo_name:
@@ -343,7 +362,7 @@ class ProfileStorage:
         Returns:
             List of (reviewer_name, frequency) tuples, sorted by frequency
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -368,7 +387,7 @@ class ProfileStorage:
         Returns:
             List of reviewer names
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -389,7 +408,7 @@ class ProfileStorage:
         Returns:
             Dictionary of statistics
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         # Count profiles
@@ -438,7 +457,7 @@ class ProfileStorage:
             suggested_reviewers: List of suggested reviewer names
             confidence_score: Assignment confidence score
         """
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -461,7 +480,7 @@ class ProfileStorage:
 
     def is_pr_processed(self, repo_name: str, pr_number: int) -> bool:
         """Check if PR has been processed"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -475,7 +494,7 @@ class ProfileStorage:
 
     def mark_pr_processed(self, repo_name: str, pr_number: int):
         """Mark PR as processed in checkpoint"""
-        conn = sqlite3.connect(str(self.db_path))
+        conn = self._connect()
         cursor = conn.cursor()
         
         cursor.execute("""

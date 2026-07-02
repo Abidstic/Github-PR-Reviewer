@@ -5,6 +5,7 @@ Utility modules for GitHub Reviewer AI
 from src.utils.config import Config, get_config
 from src.utils.logger import Logger, get_logger
 from src.utils.helpers import (
+    get_data_dir,
     load_json,
     save_json,
     ensure_directory,
@@ -29,6 +30,7 @@ __all__ = [
     'get_logger',
     
     # Helpers
+    'get_data_dir',
     'load_json',
     'save_json',
     'ensure_directory',

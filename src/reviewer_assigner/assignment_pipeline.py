@@ -146,8 +146,11 @@ class AssignmentPipeline:
         # Step 4: Post to GitHub (optional)
         if post_to_github and self.github_poster:
             logger.info("💬 Step 4/4: Posting to GitHub...")
-            
-            success = self.github_poster.post_suggestion_comment(
+
+            # Use update-or-create so that webhook retries / reopened events do
+            # NOT spam the PR with duplicate comments. If a bot comment already
+            # exists it is edited in place; otherwise a new one is created.
+            success = self.github_poster.update_existing_comment(
                 repo_full_name=repo_name,
                 pr_number=pr_number,
                 comment_body=formatted_comment,
