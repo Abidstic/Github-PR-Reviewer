@@ -45,8 +45,8 @@ class LLMClient:
             api_key=self.api_key,
             base_url=self.api_base,
             default_headers={
-                "HTTP-Referer": "https://github.com/reviewer-ai",
-                "X-Title": "GitHub Reviewer AI"
+                "HTTP-Referer": "https://github.com/apps/reviewermatch",
+                "X-Title": "ReviewerMatch"
             }
         )
         

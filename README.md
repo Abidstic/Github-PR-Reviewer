@@ -1,15 +1,39 @@
-# GitHub Reviewer AI 🤖
+# ReviewerMatch 🤖
 
 AI-powered code reviewer assignment system using **Frequency-Weighted Skill Matching** and **Knowledge Unit (KU)** indexing.
 
-## For initial setup
+**📦 GitHub App (public link): https://github.com/apps/reviewermatch**
+
+## 🚀 Install & Use (GitHub App)
+
+### Step 1 — Install the app on your repository
+1. Open **https://github.com/apps/reviewermatch**
+2. Click **Install** (or **Configure** if already installed)
+3. Choose the account/organization, then select **Only select repositories** and pick the repo(s) you want reviewer suggestions on
+4. Confirm. The app now receives `pull_request` events for those repos.
+
+### Step 2 — Index the repository (one-time, required)
+Before the app can suggest reviewers, it must learn from the repo's historical PRs and build reviewer profiles:
+
+```bash
 curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
   -H "Content-Type: application/json" \
-  -H "X-Admin-Secret: <your ADMIN_SECRET>" \
+  -H "X-Admin-Secret: <ADMIN_SECRET>" \
   -d '{"repo": "owner/repo-name"}'
+```
 
-  change the owner and repo name after that the webhook should get all the new prs.
-  The X-Admin-Secret header must match the ADMIN_SECRET env var on the server.
+- Replace `owner/repo-name` with your repository (e.g. `Abidstic/my-project`)
+- The `X-Admin-Secret` header must match the `ADMIN_SECRET` env var on the server
+- Returns `202 setup started`; indexing (PR fetching + LLM profile generation) runs in the background and can take several minutes depending on repo size
+
+### Step 3 — Open a pull request
+That's it. When a PR is opened (or reopened), the app analyzes it and posts a comment with the top suggested reviewers, match scores, and the reasoning behind each suggestion.
+
+**Notes:**
+- The very first PR after the service has been idle can take ~1–2 minutes (model cold start); later PRs are fast
+- Draft PRs are skipped until marked ready
+- Reviewer profiles are built from JavaScript-ecosystem Knowledge Units, so JS/TS repositories produce the best results
+- To refresh profiles after a burst of new review activity, re-run the Step 2 curl
 
 ## 🌟 Modern Architecture
 

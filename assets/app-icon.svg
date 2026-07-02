@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+  <!-- rounded-square background -->
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#bg)"/>
+  <!-- pull-request branch glyph -->
+  <g stroke="#FFFFFF" stroke-width="30" fill="none" stroke-linecap="round">
+    <circle cx="172" cy="138" r="36"/>
+    <line x1="172" y1="182" x2="172" y2="332"/>
+    <circle cx="172" cy="376" r="36"/>
+    <path d="M 216 138 H 268 Q 340 138 340 210 V 288"/>
+  </g>
+  <!-- reviewer check node -->
+  <circle cx="340" cy="352" r="52" fill="#34D399"/>
+  <path d="M 316 352 L 334 370 L 366 334" stroke="#FFFFFF" stroke-width="18" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
