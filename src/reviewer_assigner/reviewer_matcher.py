@@ -94,16 +94,22 @@ class ReviewerMatcher:
             return self._empty_result("No reviewers found in database")
         
         logger.info(f"📊 Evaluating {len(all_reviewers)} reviewers")
-        
+
+        # Run the FAISS similarity search ONCE per PR. Previously this was
+        # re-run (query re-embedded + index re-searched) for every candidate
+        # reviewer, i.e. N identical searches per PR.
+        similar_prs = self._find_similar_prs_for_pr(pr_data)
+
         # Score all reviewers
         reviewer_scores = []
-        
+
         for reviewer_name, profile in all_reviewers.items():
             score_breakdown = self._score_reviewer(
                 reviewer_name,
                 profile,
                 pr_requirements,
-                pr_data
+                pr_data,
+                similar_prs=similar_prs
             )
             
             reviewer_scores.append({
@@ -196,12 +202,32 @@ class ReviewerMatcher:
         
         return profiles
     
+    def _find_similar_prs_for_pr(self, pr_data: Dict) -> Optional[List[Tuple]]:
+        """
+        Run the vector similarity search once for this PR.
+
+        Returns:
+            List of (Document, distance) tuples, or None when no vector store
+            is available (scorers then fall back to a neutral 0.5).
+        """
+        if not self.similarity_matcher or not self.similarity_matcher.vector_store:
+            return None
+
+        try:
+            query = f"{pr_data.get('title', '')} {pr_data.get('description', '')[:200]}"
+            k = self.config.get('reviewer_assignment.top_k_similar_prs', 5)
+            return self.similarity_matcher.find_similar_prs(query, k=k)
+        except Exception as e:
+            logger.warning(f"⚠️ Similarity search failed: {e}")
+            return None
+
     def _score_reviewer(
         self,
         reviewer_name: str,
         profile: Dict,
         pr_requirements: Dict,
-        pr_data: Dict
+        pr_data: Dict,
+        similar_prs: Optional[List[Tuple]] = None
     ) -> Dict:
         """
         Score a reviewer using hybrid algorithm
@@ -237,10 +263,10 @@ class ReviewerMatcher:
         # 3. Review Activity Score (20%)
         scores['review_activity'] = self._score_review_activity(profile)
         
-        # 4. Similarity Match Score (20%)
+        # 4. Similarity Match Score (20%) — uses the pre-computed per-PR search
         scores['similarity_match'] = self._score_similarity_match(
             reviewer_name,
-            pr_data
+            similar_prs
         )
 
         # 5. Repository Membership Bonus (New)
@@ -381,45 +407,45 @@ class ReviewerMatcher:
         
         return score
     
-    def _score_similarity_match(self, reviewer_name: str, pr_data: Dict) -> float:
+    def _score_similarity_match(
+        self,
+        reviewer_name: str,
+        similar_prs: Optional[List[Tuple]]
+    ) -> float:
         """
-        Score based on similar PR matches
-        
+        Score based on similar PR matches.
+
+        The similarity search itself is executed ONCE per PR in
+        match_reviewers() (_find_similar_prs_for_pr) and the results are
+        shared across all candidate reviewers.
+
         Args:
             reviewer_name: Reviewer username
-            pr_data: PR data
-        
+            similar_prs: Pre-computed list of (Document, L2 distance) tuples,
+                         or None when no vector store / search failed
+
         Returns:
             Score between 0.0 and 1.0
         """
-        if not self.similarity_matcher or not self.similarity_matcher.vector_store:
+        if similar_prs is None or not similar_prs:
             return 0.5  # Neutral score if no similarity data
-        
+
         try:
-            # Build query from PR
-            query = f"{pr_data.get('title', '')} {pr_data.get('description', '')[:200]}"
-            
-            # Find similar PRs
-            similar_prs = self.similarity_matcher.find_similar_prs(query, k=5)
-            
-            if not similar_prs:
-                return 0.5
-            
             # Check if reviewer appears in similar PRs
             reviewer_scores = []
-            for doc, similarity_score in similar_prs:
+            for doc, distance in similar_prs:
                 reviewers = doc.metadata.get('reviewers', [])
                 if reviewer_name in reviewers:
                     # Normalize FAISS distance to 0-1 (lower distance = higher similarity)
                     # FAISS returns L2 distance, convert to similarity
-                    normalized_similarity = 1.0 / (1.0 + similarity_score)
+                    normalized_similarity = 1.0 / (1.0 + distance)
                     reviewer_scores.append(normalized_similarity)
-            
+
             if reviewer_scores:
                 return sum(reviewer_scores) / len(reviewer_scores)
             else:
                 return 0.0
-                
+
         except Exception as e:
             logger.warning(f"⚠️ Similarity scoring failed: {e}")
             return 0.5

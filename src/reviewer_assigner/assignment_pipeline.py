@@ -61,9 +61,11 @@ class AssignmentPipeline:
             similarity_matcher=self.similarity_matcher
         )
         
-        # Initialize GitHub poster (optional)
+        # Initialize GitHub poster (optional).
+        # installation_id is passed through so App-installation auth is used
+        # when available (multi-tenant posting); falls back to GITHUB_TOKEN.
         try:
-            self.github_poster = GitHubPoster(github_token)
+            self.github_poster = GitHubPoster(github_token, installation_id=installation_id)
         except ValueError:
             logger.warning("⚠️ GitHub poster not initialized - posting disabled")
             self.github_poster = None
@@ -74,17 +76,22 @@ class AssignmentPipeline:
         self,
         pr_data: Dict,
         post_to_github: bool = False,
-        dry_run: bool = True
+        dry_run: bool = True,
+        github_poster: Optional[GitHubPoster] = None
     ) -> Dict:
         """
         Complete workflow: analyze PR → match reviewers → format suggestions
-        
+
         Args:
             pr_data: PR data dictionary (must include: pr_number, title, description,
                      author, repo_name, changed_files, additions, deletions, labels)
             post_to_github: Whether to post suggestions to GitHub
             dry_run: If True, simulates GitHub posting without actually posting
-        
+            github_poster: Optional per-request poster (e.g. built with the
+                     webhook's installation_id). Falls back to the pipeline's
+                     default poster. Passing it per request keeps a shared
+                     singleton pipeline thread-safe across concurrent webhooks.
+
         Returns:
             {
                 'pr_data': Dict,
@@ -144,13 +151,14 @@ class AssignmentPipeline:
         logger.info(f"✅ Formatted {len(formatted_comment)} characters of markdown")
         
         # Step 4: Post to GitHub (optional)
-        if post_to_github and self.github_poster:
+        poster = github_poster or self.github_poster
+        if post_to_github and poster:
             logger.info("💬 Step 4/4: Posting to GitHub...")
 
             # Use update-or-create so that webhook retries / reopened events do
             # NOT spam the PR with duplicate comments. If a bot comment already
             # exists it is edited in place; otherwise a new one is created.
-            success = self.github_poster.update_existing_comment(
+            success = poster.update_existing_comment(
                 repo_full_name=repo_name,
                 pr_number=pr_number,
                 comment_body=formatted_comment,

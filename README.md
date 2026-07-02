@@ -5,9 +5,11 @@ AI-powered code reviewer assignment system using **Frequency-Weighted Skill Matc
 ## For initial setup
 curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
   -H "Content-Type: application/json" \
+  -H "X-Admin-Secret: <your ADMIN_SECRET>" \
   -d '{"repo": "owner/repo-name"}'
 
   change the owner and repo name after that the webhook should get all the new prs.
+  The X-Admin-Secret header must match the ADMIN_SECRET env var on the server.
 
 ## 🌟 Modern Architecture
 

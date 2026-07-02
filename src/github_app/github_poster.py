@@ -29,11 +29,17 @@ class GitHubPoster:
         # 1. Direct github_token passed to constructor
         # 2. installation_id (will generate token via App ID + Private Key)
         # 3. GITHUB_TOKEN environment variable
-        
-        token = github_token or os.getenv('GITHUB_TOKEN')
-        
+        #
+        # NOTE: installation auth must take priority over the GITHUB_TOKEN
+        # fallback, otherwise multi-tenant App posting silently degrades to
+        # the PAT (which may not have access to the target repo).
+        token = github_token
+
         if not token and self.installation_id:
             token = self._get_installation_token()
+
+        if not token:
+            token = os.getenv('GITHUB_TOKEN')
             
         if not token:
             raise ValueError(

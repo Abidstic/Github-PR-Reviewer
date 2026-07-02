@@ -54,5 +54,7 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 CMD curl -f http://localhost:${PORT:-5000}/health || exit 1
 
-# Run application
-CMD python app.py --mode webhook
+# Run application via gunicorn (production WSGI server).
+# 1 worker: the pipeline singleton (embedding model + FAISS index) and SQLite
+# want a single process; threads handle concurrent webhooks.
+CMD gunicorn --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:${PORT:-5000} src.github_app.webhook_server:app

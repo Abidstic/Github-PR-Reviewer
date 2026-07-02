@@ -6,9 +6,11 @@ Processes incoming GitHub webhook events and triggers the assignment pipeline
 import hmac
 import hashlib
 import json
+import threading
 from typing import Dict, Optional, Any
 
 from src.reviewer_assigner.assignment_pipeline import AssignmentPipeline
+from src.github_app.github_poster import GitHubPoster
 from src.data_fetcher.github_client import GitHubClient
 from src.utils import get_logger, get_config
 
@@ -17,18 +19,35 @@ logger = get_logger(__name__)
 
 class WebhookHandler:
     """Handles GitHub webhook events"""
-    
+
     def __init__(self, webhook_secret: Optional[str] = None):
         """
         Initialize webhook handler
-        
+
         Args:
             webhook_secret: Secret for verifying GitHub signatures
         """
         self.config = get_config()
         self.webhook_secret = webhook_secret
-        
+
+        # Singleton AssignmentPipeline: loading it means loading the
+        # sentence-transformers model + FAISS index, which is expensive
+        # (tens of seconds + hundreds of MB). It used to be re-created for
+        # EVERY webhook; now it is created lazily on the first PR and reused.
+        # Lazy (not eager) so server boot stays fast for health checks.
+        self._pipeline: Optional[AssignmentPipeline] = None
+        self._pipeline_lock = threading.Lock()
+
         logger.info("✅ Webhook Handler initialized")
+
+    def _get_pipeline(self) -> AssignmentPipeline:
+        """Return the shared pipeline, creating it once (thread-safe)."""
+        if self._pipeline is None:
+            with self._pipeline_lock:
+                if self._pipeline is None:
+                    logger.info("⏳ First PR: loading AssignmentPipeline singleton (model + index)...")
+                    self._pipeline = AssignmentPipeline()
+        return self._pipeline
 
     def handle_event(
         self, 
@@ -126,9 +145,22 @@ class WebhookHandler:
         logger.info(f"🔄 Processing PR #{pr_number} from {repo_name}")
             
         try:
-            # Create a fresh pipeline with this installation's token for posting
-            pipeline = AssignmentPipeline(installation_id=installation_id)
-            pipeline.process_pr(pr_data=pr_data, post_to_github=True, dry_run=False)
+            # Reuse the shared pipeline (model + FAISS loaded once, not per PR)
+            pipeline = self._get_pipeline()
+
+            # Build a per-request poster with this installation's token so
+            # posting works on any repo the App is installed on. Passed into
+            # process_pr (instead of mutating the shared pipeline) to stay
+            # thread-safe under concurrent webhooks. Falls back to the
+            # pipeline's default poster (GITHUB_TOKEN) if App auth fails.
+            poster = None
+            if installation_id:
+                try:
+                    poster = GitHubPoster(installation_id=installation_id)
+                except Exception as e:
+                    logger.warning(f"⚠️ Installation auth failed, falling back to GITHUB_TOKEN: {e}")
+
+            pipeline.process_pr(pr_data=pr_data, post_to_github=True, dry_run=False, github_poster=poster)
             return {'status': 'success', 'message': f'Suggestions posted to PR #{pr_number}', 'repo': repo_name, 'pr': pr_number}
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}")
