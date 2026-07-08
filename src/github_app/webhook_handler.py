@@ -71,6 +71,8 @@ class WebhookHandler:
             return self.handle_pull_request_event(payload, installation_id)
         elif event_type == 'installation':
             return self.handle_installation_event(payload)
+        elif event_type == 'installation_repositories':
+            return self.handle_installation_repositories_event(payload)
         elif event_type == 'ping':
             return self.handle_ping_event(payload)
         else:
@@ -167,14 +169,85 @@ class WebhookHandler:
             return {'status': 'error', 'message': f'Failed to process PR: {str(e)}'}
 
     def handle_installation_event(self, payload: Dict) -> Dict:
-        """Handle App installation/removal"""
+        """
+        Handle App installation/removal.
+
+        On 'created' (user installs the app), automatically index the selected
+        repositories so the app works without any manual /admin/setup call.
+        """
         action = payload.get('action')
+        installation_id = payload.get('installation', {}).get('id')
         logger.info(f"📥 Installation event: action={action}")
-        
+
+        if action == 'created':
+            repos = [r.get('full_name') for r in payload.get('repositories', []) if r.get('full_name')]
+            if repos:
+                self._start_auto_setup(repos, installation_id)
+                return {
+                    'status': 'success',
+                    'message': f'Installation created - auto-setup started for {len(repos)} repo(s)'
+                }
+
         return {
             'status': 'success',
             'message': f'Installation {action} handled'
         }
+
+    def handle_installation_repositories_event(self, payload: Dict) -> Dict:
+        """
+        Handle repos being added/removed from an existing installation.
+
+        On 'added', automatically index the newly added repositories.
+        """
+        action = payload.get('action')
+        installation_id = payload.get('installation', {}).get('id')
+        logger.info(f"📥 Installation repositories event: action={action}")
+
+        if action == 'added':
+            repos = [r.get('full_name') for r in payload.get('repositories_added', []) if r.get('full_name')]
+            if repos:
+                self._start_auto_setup(repos, installation_id)
+                return {
+                    'status': 'success',
+                    'message': f'Auto-setup started for {len(repos)} added repo(s)'
+                }
+
+        return {
+            'status': 'success',
+            'message': f'Installation repositories {action} handled'
+        }
+
+    def _start_auto_setup(self, repos: list, installation_id: Optional[int]) -> None:
+        """
+        Index repositories in a background thread (sequentially, to avoid
+        concurrent FAISS index writes and duplicate LLM spend).
+
+        Idempotent: repos that already have reviewer profiles are skipped, so
+        webhook redeliveries don't re-index (and re-pay for) the same repo.
+        Manual re-indexing is still available via POST /admin/setup.
+        """
+        def run():
+            # Imported here to avoid a circular import (app.py imports the
+            # webhook server, which imports this handler).
+            from app import setup_mode
+            from src.profile_generator.profile_storage import ProfileStorage
+
+            # null/None in config = index ALL historical PRs
+            max_prs = self.config.get('github.auto_setup_max_prs', None)
+            storage = ProfileStorage()
+
+            for repo in repos:
+                try:
+                    if storage.list_reviewers(repo_name=repo):
+                        logger.info(f"⏭️ {repo} already indexed - skipping auto-setup")
+                        continue
+                    logger.info(f"🚀 Auto-setup starting for {repo} ({max_prs or 'ALL'} PRs)")
+                    setup_mode(repo=repo, max_prs=max_prs, installation_id=installation_id)
+                    logger.info(f"✅ Auto-setup completed for {repo}")
+                except Exception as e:
+                    logger.error(f"❌ Auto-setup failed for {repo}: {e}")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def handle_ping_event(self, payload: Dict) -> Dict:
         """Handle webhook ping test"""
@@ -208,7 +281,11 @@ class WebhookHandler:
                 'additions': pr_data_raw.get('additions', 0),
                 'deletions': pr_data_raw.get('deletions', 0),
                 'labels': [l.get('name') for l in pr_data_raw.get('labels', [])],
-                'is_draft': pr_data_raw.get('draft', False)
+                'is_draft': pr_data_raw.get('draft', False),
+                # Fork repos get profiles built from the PARENT's reviewers.
+                # The formatter uses this to avoid @-mentioning those people
+                # (they have no relation to the fork and would get notified).
+                'is_fork': repo_data.get('fork', False)
             }
         except Exception as e:
             logger.error(f"❌ Error extracting PR data: {e}")

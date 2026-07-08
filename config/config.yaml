@@ -5,6 +5,18 @@ github:
     max_prs_to_fetch: null # null = fetch all PRs (use for initial setup)
     api_rate_limit_delay: 0.3 # seconds between API calls
 
+    # Max historical PRs indexed automatically when someone installs the app.
+    # null = index ALL historical PRs (full profile quality; unbounded LLM cost
+    # per installation - acceptable for thesis/controlled use). Set a number
+    # (e.g. 50) to bound cost if the app is ever opened to the public.
+    auto_setup_max_prs: null
+
+    # Max PRs fetched from the PARENT repo when the installed repo is a FORK.
+    # Forks of large OSS repos can have thousands of upstream PRs; this bounds
+    # fetch time + LLM cost. Recent PRs are fetched first (most relevant for
+    # active-reviewer profiles). Explicit --max-prs / setup calls override this.
+    fork_setup_max_prs: 300
+
     # Webhook settings
     webhook:
         enabled: true

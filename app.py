@@ -94,23 +94,54 @@ def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
             logger.info(f"🔑 Auto-resolved installation_id: {installation_id}")
         except Exception as e:
             logger.warning(f"⚠️ Could not auto-resolve installation_id ({e}), falling back to GITHUB_TOKEN")
-    
+
+    # ---- Fork detection ----
+    # If the target repo is a fork, its own PR history is empty/thin. Fetch
+    # historical PR data from the PARENT repo instead, but label everything
+    # with the fork's name so webhook-time matching (which sees the fork's
+    # name) finds the profiles. Non-forks are unaffected.
+    source_owner, source_repo = owner, repo_name
+    label_repo = f"{owner}/{repo_name}"
+    is_fork = False
+    try:
+        probe_client = GitHubClient(installation_id=installation_id)
+        repo_info = probe_client.get_repository(owner, repo_name)
+        if repo_info and repo_info.get('fork') and repo_info.get('parent'):
+            is_fork = True
+            parent_full_name = repo_info['parent']['full_name']
+            source_owner, source_repo = parent_full_name.split('/')
+            if max_prs is None:
+                max_prs = get_config().get('github.fork_setup_max_prs', 300)
+            logger.info("🔱 FORK DETECTED")
+            logger.info(f"   Data source (parent): {parent_full_name}")
+            logger.info(f"   Profiles labeled as (fork): {label_repo}")
+            logger.info(f"   Max PRs fetched from parent: {max_prs}")
+    except Exception as e:
+        logger.warning(f"⚠️ Fork detection failed ({e}) - treating as a regular repo")
+
     # Step 1: Fetch reviewer data
     logger.info("\n" + "=" * 80)
     logger.info("STEP 1: Fetching Reviewer Data from GitHub")
     logger.info("=" * 80)
-    
+
     try:
         profile_storage = ProfileStorage()
-        github_client = GitHubClient(installation_id=installation_id)
+        if is_fork:
+            # The installation token is scoped to the FORK, not the parent.
+            # Use the PAT (GITHUB_TOKEN) client for reading the public parent.
+            github_client = GitHubClient()
+            logger.info("🔑 Fork mode: fetching parent history with GITHUB_TOKEN")
+        else:
+            github_client = GitHubClient(installation_id=installation_id)
         fetcher = ReviewerDataFetcher(github_client=github_client)
-        
+
         # Pass storage to handle PR-level checkpointing
         data = fetcher.fetch_repository_reviewer_data(
-            owner=owner,
-            repo=repo_name,
+            owner=source_owner,
+            repo=source_repo,
             max_prs_to_fetch=max_prs,
-            storage=profile_storage
+            storage=profile_storage,
+            label_repo=label_repo
         )
         
         # Save raw data for this run

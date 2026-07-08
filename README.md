@@ -12,8 +12,13 @@ AI-powered code reviewer assignment system using **Frequency-Weighted Skill Matc
 3. Choose the account/organization, then select **Only select repositories** and pick the repo(s) you want reviewer suggestions on
 4. Confirm. The app now receives `pull_request` events for those repos.
 
-### Step 2 — Index the repository (one-time, required)
-Before the app can suggest reviewers, it must learn from the repo's historical PRs and build reviewer profiles:
+### Step 2 — Wait for automatic indexing
+Installing the app automatically triggers indexing: the system fetches the repo's full PR history, builds LLM-generated reviewer skill profiles, and creates the similarity index. No action needed — allow a few minutes for small repos (longer for repos with a large PR history). Repos added to an existing installation later are indexed automatically too, and selecting **All repositories** during install works — each repo is indexed one after another.
+
+<details>
+<summary>Operator only: manual (re-)indexing</summary>
+
+The operator can re-index a repo at any time (e.g. after a burst of new review activity, or to index more than 50 PRs):
 
 ```bash
 curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
@@ -22,9 +27,8 @@ curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
   -d '{"repo": "owner/repo-name"}'
 ```
 
-- Replace `owner/repo-name` with your repository (e.g. `Abidstic/my-project`)
-- The `X-Admin-Secret` header must match the `ADMIN_SECRET` env var on the server
-- Returns `202 setup started`; indexing (PR fetching + LLM profile generation) runs in the background and can take several minutes depending on repo size
+The `X-Admin-Secret` header must match the `ADMIN_SECRET` env var on the server.
+</details>
 
 ### Step 3 — Open a pull request
 That's it. When a PR is opened (or reopened), the app analyzes it and posts a comment with the top suggested reviewers, match scores, and the reasoning behind each suggestion.
@@ -33,7 +37,8 @@ That's it. When a PR is opened (or reopened), the app analyzes it and posts a co
 - The very first PR after the service has been idle can take ~1–2 minutes (model cold start); later PRs are fast
 - Draft PRs are skipped until marked ready
 - Reviewer profiles are built from JavaScript-ecosystem Knowledge Units, so JS/TS repositories produce the best results
-- To refresh profiles after a burst of new review activity, re-run the Step 2 curl
+- Suggestions come from the repo's own review history — repos with little past review activity will get few/no suggestions
+- **Forks are supported**: if you install the app on a fork, reviewer profiles are automatically built from the *parent* repository's review history (most recent ~300 PRs), and suggestions on the fork's PRs draw from those upstream reviewers (rendered without @-mentions so no one is notified)
 
 ## 🌟 Modern Architecture
 

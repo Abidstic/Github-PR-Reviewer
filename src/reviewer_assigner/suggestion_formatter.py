@@ -37,17 +37,23 @@ class SuggestionFormatter:
         """
         pr_number = pr_data.get('pr_number', 0)
         pr_author = pr_data.get('author', {}).get('username', 'Unknown') if pr_data.get('author') else 'Unknown'
-        
-        logger.info(f"📝 Formatting suggestions for PR #{pr_number}")
-        
+
+        # On FORK repos, profiles come from the parent repo's reviewers.
+        # @-mentioning them would send GitHub notifications to real people who
+        # have no relation to this fork, so render names as plain code instead.
+        is_fork = pr_data.get('is_fork', False)
+        mention = (lambda u: f"`{u}`") if is_fork else (lambda u: f"@{u}")
+
+        logger.info(f"📝 Formatting suggestions for PR #{pr_number} (fork={is_fork})")
+
         # Build markdown
         lines = []
-        
+
         # Header
         lines.append("## 🤖 AI-Powered Reviewer Suggestions")
         lines.append("")
         lines.append(f"**Pull Request:** #{pr_number} - {pr_data.get('title', 'Untitled')}")
-        lines.append(f"**Author:** @{pr_author}")
+        lines.append(f"**Author:** {mention(pr_author)}")
         lines.append(f"**Complexity:** {pr_requirements.get('complexity_level', 'Unknown')}")
         lines.append("")
         
@@ -76,7 +82,7 @@ class SuggestionFormatter:
             lines.append("")
             
             for i, reviewer in enumerate(reviewers, 1):
-                lines.append(f"#### {i}. @{reviewer['reviewer_name']} "
+                lines.append(f"#### {i}. {mention(reviewer['reviewer_name'])} "
                            f"({self._format_percentage(reviewer['match_score'])} match)")
                 lines.append("")
                 
@@ -169,9 +175,10 @@ class SuggestionFormatter:
         if not reviewers:
             lines.append("⚠️ No suitable reviewers found.")
         else:
+            mention = (lambda u: f"`{u}`") if pr_data.get('is_fork', False) else (lambda u: f"@{u}")
             for i, reviewer in enumerate(reviewers, 1):
                 score_str = self._format_percentage(reviewer['match_score'])
-                lines.append(f"{i}. **@{reviewer['reviewer_name']}** ({score_str}) - {reviewer['reasoning']}")
+                lines.append(f"{i}. **{mention(reviewer['reviewer_name'])}** ({score_str}) - {reviewer['reasoning']}")
         
         lines.append("")
         lines.append(f"_Confidence: {confidence_emoji} {confidence}_")

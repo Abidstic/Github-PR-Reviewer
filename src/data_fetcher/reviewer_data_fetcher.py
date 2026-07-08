@@ -195,22 +195,28 @@ class ReviewerDataFetcher:
         owner: str,
         repo: str,
         max_prs_to_fetch: Optional[int] = None,
-        storage: Any = None
+        storage: Any = None,
+        label_repo: Optional[str] = None
     ) -> Dict:
         """
         Fetch reviewer data for entire repository
-        
+
         Args:
-            owner: Repository owner
-            repo: Repository name
+            owner: Repository owner (the repo DATA is fetched from)
+            repo: Repository name (the repo DATA is fetched from)
             max_prs_to_fetch: Maximum PRs to fetch (uses config default if None)
             storage: Optional ProfileStorage to check for already processed PRs
-        
+            label_repo: Optional 'owner/repo' name to STAMP on all collected
+                        data instead of the fetch target. Used for forks: data
+                        is fetched from the parent repo but labeled with the
+                        fork's name so webhook-time matching (which sees the
+                        fork's name) finds the profiles.
+
         Returns:
             Complete repository reviewer data with metadata
         """
-        max_prs = max_prs_to_fetch 
-        repo_full_name = f"{owner}/{repo}"
+        max_prs = max_prs_to_fetch
+        repo_full_name = label_repo or f"{owner}/{repo}"
         
         if max_prs is None:
             logger.info(f"📊 Fetching ALL PRs for {repo_full_name} (unlimited)")
@@ -263,8 +269,12 @@ class ReviewerDataFetcher:
                 logger.info(f"  📋 Processing PR #{pr_number}: {pr['title'][:60]}...")
                 
                 pr_data = self.fetch_pr_reviewer_data(owner, repo, pr_number)
-                
+
                 if pr_data:
+                    # Re-stamp with the label repo (fork name) when provided,
+                    # so profiles/index entries match webhook-time repo names.
+                    if label_repo:
+                        pr_data['repo_name'] = label_repo
                     all_reviewer_data.append(pr_data)
                     reviewer_count = len(pr_data['reviewer_summary']['unique_reviewers'])
                     logger.info(
@@ -295,7 +305,8 @@ class ReviewerDataFetcher:
         # Generate metadata
         timestamp = get_timestamp()
         metadata = {
-            'repository': f"{owner}/{repo}",
+            'repository': repo_full_name,
+            'source_repository': f"{owner}/{repo}",  # differs from 'repository' in fork mode
             'collection_date': timestamp,
             'total_prs_analyzed': len(all_reviewer_data),
             'total_reviewers_found': len(reviewer_profiles),
