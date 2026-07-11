@@ -6,7 +6,7 @@ authors:
   - family-names: "Mahmud"
     given-names: "Abid Al Mahmud"
     email: "mahinabid211200@gmail.com"
-    # orcid: "https://orcid.org/0000-0000-0000-0000"  # add yours if you have one
+    orcid: "https://orcid.org/0009-0008-1122-2457" 
 version: "1.0.0"
 date-released: 2026-07-11
 repository-code: "https://github.com/Abidstic/Github-PR-Reviewer"
@@ -27,4 +27,4 @@ abstract: >-
   candidate reviewers with a hybrid score combining KU frequency match,
   experience level, review activity, and FAISS vector similarity to past
   pull requests.
-# doi: 10.5281/zenodo.XXXXXXX  # uncomment and fill after the first Zenodo release
+doi: 10.5281/zenodo.21306453
