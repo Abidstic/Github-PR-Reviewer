@@ -496,14 +496,33 @@ class ProfileStorage:
         """Mark PR as processed in checkpoint"""
         conn = self._connect()
         cursor = conn.cursor()
-        
+
         cursor.execute("""
             INSERT OR IGNORE INTO processed_prs (repo_name, pr_number)
             VALUES (?, ?)
         """, (repo_name, pr_number))
-        
+
         conn.commit()
         conn.close()
+
+    def clear_pr_checkpoints(self, repo_name: str) -> int:
+        """
+        Delete all PR checkpoints for a repo so the next setup re-fetches and
+        re-processes its full history (used by /admin/setup force=true).
+
+        Returns:
+            Number of checkpoint rows deleted
+        """
+        conn = self._connect()
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM processed_prs WHERE repo_name = ?", (repo_name,))
+        deleted = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+        logger.info(f"🧹 Cleared {deleted} PR checkpoint(s) for {repo_name}")
+        return deleted
 
 
 # Example usage and testing

@@ -31,6 +31,11 @@ llm:
     max_tokens: 4000
     retry_attempts: 3
     retry_delay: 2 # seconds
+    # OpenRouter providers to EXCLUDE from routing. Novita advertises this
+    # model but rejects requests ("does not support endpoint"), which burned
+    # all retries during setup on 2026-07-08.
+    ignore_providers:
+        - 'Novita'
 
 profile_generation:
     batch_size: 15 # profiles to generate at once

@@ -106,6 +106,17 @@ def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
     try:
         probe_client = GitHubClient(installation_id=installation_id)
         repo_info = probe_client.get_repository(owner, repo_name)
+        if repo_info is None:
+            # Installation auth may be broken or mis-scoped; retry with the
+            # GITHUB_TOKEN PAT (works for any public repo).
+            logger.warning("⚠️ Repo info fetch failed with installation auth - retrying with GITHUB_TOKEN")
+            repo_info = GitHubClient().get_repository(owner, repo_name)
+        if repo_info is None:
+            logger.error(
+                "❌ Could not fetch repo metadata AT ALL - fork detection skipped "
+                "AND data fetching will likely fail too. Check GITHUB_TOKEN / "
+                "GITHUB_PRIVATE_KEY credentials!"
+            )
         if repo_info and repo_info.get('fork') and repo_info.get('parent'):
             is_fork = True
             parent_full_name = repo_info['parent']['full_name']
@@ -173,31 +184,47 @@ def setup_mode(repo: str, max_prs: int = None, installation_id: int = None):
         
         profiles_updated = 0
         
+        failed_reviewers = []
+
         for reviewer_name, new_stats in reviewer_stats.items():
             logger.info(f"🔄 Processing: {reviewer_name}")
-            
-            # Check for existing profile
-            existing_profile = profile_storage.get_profile(reviewer_name)
-            if existing_profile:
-                logger.info(f"  ℹ️ Updating existing profile for {reviewer_name}")
-            
-            # 1. Build the profile object (calls LLM)
-            profile_data = profile_builder.build_reviewer_profile(
-                reviewer_name=reviewer_name,
-                reviewer_stats=new_stats
-            )
-            
-            if profile_data:
-                # 2. Save to JSON and Database
-                json_path, success = profile_storage.save_profile(profile_data)
-                
-                if success:
-                    profiles_updated += 1
-                    logger.info(f"✅ Profile updated and saved: {reviewer_name}")
+
+            # One reviewer's LLM failure must NEVER abort the whole setup -
+            # keep going so remaining profiles and the FAISS index still build.
+            try:
+                # Check for existing profile
+                existing_profile = profile_storage.get_profile(reviewer_name)
+                if existing_profile:
+                    logger.info(f"  ℹ️ Updating existing profile for {reviewer_name}")
+
+                # 1. Build the profile object (calls LLM)
+                profile_data = profile_builder.build_reviewer_profile(
+                    reviewer_name=reviewer_name,
+                    reviewer_stats=new_stats
+                )
+
+                if profile_data:
+                    # 2. Save to JSON and Database
+                    json_path, success = profile_storage.save_profile(profile_data)
+
+                    if success:
+                        profiles_updated += 1
+                        logger.info(f"✅ Profile updated and saved: {reviewer_name}")
+                    else:
+                        logger.warning(f"⚠️ Failed to save profile to database: {reviewer_name}")
+                        failed_reviewers.append(reviewer_name)
                 else:
-                    logger.warning(f"⚠️ Failed to save profile to database: {reviewer_name}")
-            else:
-                logger.warning(f"⚠️ Could not generate profile for {reviewer_name} (check logs or min_reviews)")
+                    logger.warning(f"⚠️ Could not generate profile for {reviewer_name} (check logs or min_reviews)")
+                    failed_reviewers.append(reviewer_name)
+            except Exception as e:
+                logger.error(f"❌ Profile generation failed for {reviewer_name}: {e}")
+                failed_reviewers.append(reviewer_name)
+
+        if failed_reviewers:
+            logger.warning(
+                f"⚠️ {len(failed_reviewers)} reviewer profile(s) FAILED: {', '.join(failed_reviewers)}. "
+                f"Re-run setup with force=true after fixing the LLM issue to rebuild them."
+            )
         
         logger.info(f"\n✅ Total profiles updated: {profiles_updated}")
         

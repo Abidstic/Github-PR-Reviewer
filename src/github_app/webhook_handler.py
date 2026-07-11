@@ -38,6 +38,13 @@ class WebhookHandler:
         self._pipeline: Optional[AssignmentPipeline] = None
         self._pipeline_lock = threading.Lock()
 
+        # Repos currently being auto-indexed, and PRs that arrived during
+        # indexing (queued for replay once indexing completes). In-memory:
+        # lost on restart, in which case close/reopen the PR re-triggers it.
+        self._indexing_repos: set = set()
+        self._pending_prs: Dict[str, list] = {}
+        self._state_lock = threading.Lock()
+
         logger.info("✅ Webhook Handler initialized")
 
     def _get_pipeline(self) -> AssignmentPipeline:
@@ -145,7 +152,21 @@ class WebhookHandler:
         pr_number = pr_data['pr_number']
         repo_name = pr_data['repo_name']
         logger.info(f"🔄 Processing PR #{pr_number} from {repo_name}")
-            
+
+        # If this repo is still being indexed, don't run a doomed matching
+        # pass. Post a placeholder comment and queue the PR - it will be
+        # processed automatically when indexing completes (the suggestion
+        # then EDITS the placeholder in place via the dedup guard).
+        with self._state_lock:
+            still_indexing = repo_name in self._indexing_repos
+            if still_indexing:
+                self._pending_prs.setdefault(repo_name, []).append((pr_data, installation_id))
+
+        if still_indexing:
+            logger.info(f"⏳ {repo_name} is still indexing - queueing PR #{pr_number} for replay")
+            self._post_indexing_placeholder(pr_data, installation_id)
+            return {'status': 'queued', 'message': f'Repo is indexing; PR #{pr_number} queued for replay'}
+
         try:
             # Reuse the shared pipeline (model + FAISS loaded once, not per PR)
             pipeline = self._get_pipeline()
@@ -226,6 +247,11 @@ class WebhookHandler:
         webhook redeliveries don't re-index (and re-pay for) the same repo.
         Manual re-indexing is still available via POST /admin/setup.
         """
+        # Mark all repos as "indexing" up-front so PRs opened on any of them
+        # while the (sequential) setup runs get queued instead of failing.
+        with self._state_lock:
+            self._indexing_repos.update(repos)
+
         def run():
             # Imported here to avoid a circular import (app.py imports the
             # webhook server, which imports this handler).
@@ -240,14 +266,78 @@ class WebhookHandler:
                 try:
                     if storage.list_reviewers(repo_name=repo):
                         logger.info(f"⏭️ {repo} already indexed - skipping auto-setup")
-                        continue
-                    logger.info(f"🚀 Auto-setup starting for {repo} ({max_prs or 'ALL'} PRs)")
-                    setup_mode(repo=repo, max_prs=max_prs, installation_id=installation_id)
-                    logger.info(f"✅ Auto-setup completed for {repo}")
+                    else:
+                        logger.info(f"🚀 Auto-setup starting for {repo} ({max_prs or 'ALL'} PRs)")
+                        setup_mode(repo=repo, max_prs=max_prs, installation_id=installation_id)
+                        logger.info(f"✅ Auto-setup completed for {repo}")
                 except Exception as e:
                     logger.error(f"❌ Auto-setup failed for {repo}: {e}")
+                finally:
+                    # Whatever happened, unblock the repo and replay any PRs
+                    # that arrived while it was indexing.
+                    with self._state_lock:
+                        self._indexing_repos.discard(repo)
+                        pending = self._pending_prs.pop(repo, [])
+                    self._replay_pending_prs(repo, pending)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _post_indexing_placeholder(self, pr_data: Dict, installation_id: Optional[int]) -> None:
+        """
+        Immediately tell the PR author that indexing is in progress. Uses the
+        same bot_identifier header as real suggestions, so the replayed
+        suggestion later EDITS this comment instead of adding a second one.
+        """
+        body = (
+            "## 🤖 AI-Powered Reviewer Suggestions\n\n"
+            "⏳ **ReviewerMatch is still indexing this repository's review history.**\n\n"
+            "Reviewer suggestions will appear here automatically once indexing "
+            "completes (usually a few minutes after installation)."
+        )
+        try:
+            poster = GitHubPoster(installation_id=installation_id)
+            poster.update_existing_comment(
+                repo_full_name=pr_data['repo_name'],
+                pr_number=pr_data['pr_number'],
+                comment_body=body,
+                dry_run=False
+            )
+            logger.info(f"💬 Posted indexing placeholder on PR #{pr_data['pr_number']}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not post indexing placeholder: {e}")
+
+    def _replay_pending_prs(self, repo: str, pending: list) -> None:
+        """Process PRs that arrived while their repo was being indexed."""
+        if not pending:
+            return
+
+        logger.info(f"▶️ Replaying {len(pending)} queued PR(s) for {repo}")
+
+        # The pipeline singleton may have been created BEFORE the FAISS index
+        # existed - reload the vector store so similarity matching works.
+        if self._pipeline is not None:
+            try:
+                self._pipeline.similarity_matcher.load_vector_store("reviewer_vectors.faiss")
+                logger.info("🔄 Reloaded vector store after indexing")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not reload vector store: {e}")
+
+        for pr_data, inst_id in pending:
+            pr_number = pr_data.get('pr_number')
+            try:
+                pipeline = self._get_pipeline()
+
+                poster = None
+                if inst_id:
+                    try:
+                        poster = GitHubPoster(installation_id=inst_id)
+                    except Exception as e:
+                        logger.warning(f"⚠️ Installation auth failed, falling back to GITHUB_TOKEN: {e}")
+
+                pipeline.process_pr(pr_data=pr_data, post_to_github=True, dry_run=False, github_poster=poster)
+                logger.info(f"✅ Replayed queued PR #{pr_number} ({repo})")
+            except Exception as e:
+                logger.error(f"❌ Failed to replay queued PR #{pr_number} ({repo}): {e}")
 
     def handle_ping_event(self, payload: Dict) -> Dict:
         """Handle webhook ping test"""

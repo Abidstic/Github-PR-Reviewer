@@ -53,6 +53,7 @@ def trigger_setup():
     data = request.get_json(silent=True) or {}
     repo = data.get('repo')  # Format: "owner/repo"
     installation_id = data.get('installation_id')  # Optional: use App auth instead of GITHUB_TOKEN
+    force = bool(data.get('force', False))  # true = clear PR checkpoints and re-process everything
 
     if not repo:
         return {"error": "repo required in format owner/repo"}, 400
@@ -60,6 +61,9 @@ def trigger_setup():
     # Run setup in background thread
     def run_setup():
         try:
+            if force:
+                from src.profile_generator.profile_storage import ProfileStorage
+                ProfileStorage().clear_pr_checkpoints(repo)
             setup_mode(repo=repo, installation_id=installation_id)
             logger.info(f"Setup completed for {repo}")
         except Exception as e:
@@ -67,7 +71,7 @@ def trigger_setup():
 
     threading.Thread(target=run_setup, daemon=True).start()
 
-    return {"status": "setup started", "repo": repo}, 202
+    return {"status": "setup started", "repo": repo, "force": force}, 202
 
 
     

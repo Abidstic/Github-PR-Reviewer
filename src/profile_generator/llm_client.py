@@ -84,12 +84,19 @@ class LLMClient:
         start_time = time.time()
         
         try:
+            # OpenRouter provider routing: some fallback providers (e.g. Novita)
+            # advertise this model but reject the request ("does not support
+            # endpoint"), which burned all retries in production. Ignore them.
+            ignore_providers = self.config.get('llm.ignore_providers', ['Novita'])
+            extra_body = {"provider": {"ignore": ignore_providers}} if ignore_providers else {}
+
             # Use direct OpenAI completion call
             completion = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt_text}],
                 temperature=self.temperature,
-                max_tokens=self.max_tokens
+                max_tokens=self.max_tokens,
+                extra_body=extra_body
             )
             
             response = completion.choices[0].message.content
