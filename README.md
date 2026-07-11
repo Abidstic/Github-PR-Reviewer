@@ -159,7 +159,7 @@ This system is designed to prove that **Frequency-Weighted KU Matching** signifi
 ## 📖 Citation
 
 <!-- Replace the badge below with the real one from Zenodo after the first release -->
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21306453.svg)](https://doi.org/10.5281/zenodo.21306453)
 
 If you use ReviewerMatch in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
 
