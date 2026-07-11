@@ -165,7 +165,7 @@ If you use ReviewerMatch in your research, please cite it (see `CITATION.cff`, o
 
 ```
 Abid, M. (2026). ReviewerMatch: AI-Powered Code Reviewer Assignment using
-Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.XXXXXXX
+Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.21306453
 ```
 
 **License**: MIT
