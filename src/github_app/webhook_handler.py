@@ -363,8 +363,10 @@ class WebhookHandler:
 
             return {
                 'pr_number': pr_number,
-                'title': pr_data_raw.get('title'),
-                'description': pr_data_raw.get('body', ''),
+                'title': pr_data_raw.get('title') or '',
+                # .get('body', '') still returns None when body is null in the
+                # payload (PRs with no description) - normalize to ''
+                'description': pr_data_raw.get('body') or '',
                 'author': {'username': pr_data_raw.get('user', {}).get('login')},
                 'repo_name': repo_data.get('full_name'),
                 'changed_files': changed_files,

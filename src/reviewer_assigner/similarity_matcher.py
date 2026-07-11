@@ -110,7 +110,7 @@ class SimilarityMatcher:
 Repository: {repo_name}
 PR #{pr.get('pr_number')}: {pr.get('title', '')}
 Author: {author}
-Description: {pr.get('description', '')[:300]}...
+Description: {(pr.get('description') or '')[:300]}...
 Labels: {', '.join(pr.get('labels', []))}
 State: {pr.get('state', 'unknown')}
 Files: {pr.get('changed_files_count', 0)} changed

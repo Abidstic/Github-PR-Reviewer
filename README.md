@@ -18,13 +18,13 @@ Installing the app automatically triggers indexing: the system fetches the repo'
 <details>
 <summary>Operator only: manual (re-)indexing</summary>
 
-The operator can re-index a repo at any time (e.g. after a burst of new review activity, or to index more than 50 PRs):
+The operator can re-index a repo at any time (e.g. after a burst of new review activity). Add `"force": true` to clear checkpoints and re-process the full history:
 
 ```bash
 curl -X POST https://github-pr-reviewer-production.up.railway.app/admin/setup \
   -H "Content-Type: application/json" \
   -H "X-Admin-Secret: <ADMIN_SECRET>" \
-  -d '{"repo": "owner/repo-name"}'
+  -d '{"repo": "owner/repo-name", "force": true}'
 ```
 
 The `X-Admin-Secret` header must match the `ADMIN_SECRET` env var on the server.
@@ -121,7 +121,7 @@ python app.py --mode update-profiles --repo owner/repo
 
 ---
 
-## � How It Works: The Workflow
+## ⚙️ How It Works: The Workflow
 
 1.  **Event Detection**: The `WebhookServer` receives a `pull_request.opened` event from GitHub.
 2.  **Requirements Extraction**: The `PRAnalyzer` uses an LLM to identify the technical requirements, complexity, and KU needs of the new PR.
@@ -134,7 +134,7 @@ python app.py --mode update-profiles --repo owner/repo
 
 ---
 
-## �📁 Detailed Project Structure
+## 📁 Detailed Project Structure
 
 - **`src/data_fetcher/`**: The entry point for data. Contains the `GitHubClient` for API interactions and `ReviewerDataFetcher` which crawls historical PRs to build the initial training set.
 - **`src/profile_generator/`**: The "Intelligence" layer.
@@ -155,5 +155,17 @@ python app.py --mode update-profiles --repo owner/repo
 
 ## 📊 Research Goals
 This system is designed to prove that **Frequency-Weighted KU Matching** significantly outperforms manual reviewer assignment by identifying "quiet experts" who may not be the most talkative but have high-frequency technical hits in specific Knowledge Units.
+
+## 📖 Citation
+
+<!-- Replace the badge below with the real one from Zenodo after the first release -->
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+
+If you use ReviewerMatch in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
+
+```
+Abid, M. (2026). ReviewerMatch: AI-Powered Code Reviewer Assignment using
+Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.XXXXXXX
+```
 
 **License**: MIT

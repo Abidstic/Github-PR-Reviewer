@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "ReviewerMatch: AI-Powered Code Reviewer Assignment using Frequency-Weighted Knowledge Unit Matching"
+type: software
+authors:
+  - family-names: "Mahmud"
+    given-names: "Abid Al Mahmud"
+    email: "mahinabid211200@gmail.com"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"  # add yours if you have one
+version: "1.0.0"
+date-released: 2026-07-11
+repository-code: "https://github.com/Abidstic/Github-PR-Reviewer"
+url: "https://github.com/apps/reviewermatch"
+license: MIT
+keywords:
+  - code review
+  - reviewer recommendation
+  - knowledge units
+  - large language models
+  - GitHub App
+  - vector similarity
+abstract: >-
+  ReviewerMatch is a GitHub App that automatically suggests the best code
+  reviewers when a pull request is opened. It builds reviewer expertise
+  profiles from historical review comments using LLM-based extraction of
+  17 JavaScript Knowledge Units (KUs) with frequency weighting, and ranks
+  candidate reviewers with a hybrid score combining KU frequency match,
+  experience level, review activity, and FAISS vector similarity to past
+  pull requests.
+# doi: 10.5281/zenodo.XXXXXXX  # uncomment and fill after the first Zenodo release

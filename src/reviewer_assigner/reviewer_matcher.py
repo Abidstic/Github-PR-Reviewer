@@ -214,7 +214,8 @@ class ReviewerMatcher:
             return None
 
         try:
-            query = f"{pr_data.get('title', '')} {pr_data.get('description', '')[:200]}"
+            # 'or' guards against description being None (PRs with empty body)
+            query = f"{pr_data.get('title') or ''} {(pr_data.get('description') or '')[:200]}"
             k = self.config.get('reviewer_assignment.top_k_similar_prs', 5)
             return self.similarity_matcher.find_similar_prs(query, k=k)
         except Exception as e:
