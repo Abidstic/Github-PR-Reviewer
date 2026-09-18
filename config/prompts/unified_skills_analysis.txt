@@ -1,0 +1,25 @@
+Analyze the following activity data for GitHub user {username} and extract their JavaScript technical skills and expertise.
+
+This user has contributed to code in the following ways:
+{activity_data}
+
+Each activity item has a "role" field indicating how the user was involved:
+- "author": The user created this PR (their code changes demonstrate what they know)
+- "reviewer": The user reviewed this PR (their review demonstrates their expertise)
+- "commenter": The user left a code review comment on a specific file (shows file-level knowledge)
+
+Based on this activity data, identify:
+1. JavaScript frameworks and libraries they show expertise in (React, Vue, Angular, Node.js, Express.js, etc.)
+2. JavaScript programming patterns and paradigms they understand
+3. Frontend vs Backend JavaScript knowledge demonstrated
+4. Testing frameworks and methodologies knowledge (Jest, Mocha, etc.)
+5. Build tools and development workflow understanding
+6. JavaScript ES6+ features knowledge
+7. TypeScript usage and proficiency
+8. API development and consumption patterns
+9. Asynchronous programming understanding
+10. Code quality and modern JavaScript practices knowledge
+
+Provide a detailed analysis focusing exclusively on JavaScript ecosystem skills and expertise.
+Look for evidence in PR titles, descriptions, file paths, review comments, and code change patterns.
+Consider BOTH authored PRs and review activity as evidence of expertise.
