@@ -762,3 +762,83 @@ class WindowManager:
 
         logger.info(f"Populated window for {repo_name}: {added} PRs added")
         return added
+
+    def clear_window(self, repo_name: str) -> int:
+        """Delete all PRs (and cascaded data) for a repo. For force re-setup."""
+        conn = self.db.connect()
+        cursor = conn.execute(
+            "DELETE FROM pr_window WHERE repo_name = ?", (repo_name,)
+        )
+        deleted = cursor.rowcount
+        conn.execute(
+            "DELETE FROM user_profiles WHERE repo_name = ?", (repo_name,)
+        )
+        conn.execute(
+            "UPDATE repo_metadata SET window_size = 0 WHERE repo_name = ?",
+            (repo_name,)
+        )
+        conn.commit()
+        conn.close()
+        logger.info(f"Cleared window for {repo_name}: {deleted} PRs removed")
+        return deleted
+
+    def get_window_data_for_faiss(self, repo_name: str) -> List[Dict]:
+        """
+        Return window PRs with reviews/comments in the format that
+        SimilarityMatcher.create_embeddings_from_reviewer_data() expects.
+        """
+        conn = self.db.connect()
+        prs = conn.execute(
+            "SELECT * FROM pr_window WHERE repo_name = ? "
+            "ORDER BY window_position ASC", (repo_name,)
+        ).fetchall()
+
+        result = []
+        for pr in prs:
+            pr_dict = dict(pr)
+            pr_id = pr_dict['id']
+
+            reviews_rows = conn.execute(
+                "SELECT * FROM pr_reviews WHERE pr_window_id = ?", (pr_id,)
+            ).fetchall()
+            comments_rows = conn.execute(
+                "SELECT * FROM pr_review_comments WHERE pr_window_id = ?",
+                (pr_id,)
+            ).fetchall()
+
+            changed_files_raw = pr_dict.get('changed_files') or '[]'
+            changed_files = json.loads(changed_files_raw) \
+                if isinstance(changed_files_raw, str) else changed_files_raw
+            labels_raw = pr_dict.get('labels') or '[]'
+            labels = json.loads(labels_raw) \
+                if isinstance(labels_raw, str) else labels_raw
+
+            result.append({
+                'pr_number': pr_dict['pr_number'],
+                'title': pr_dict.get('title', ''),
+                'description': pr_dict.get('description', ''),
+                'author': {'username': pr_dict['author_username']},
+                'repo_name': pr_dict['repo_name'],
+                'state': 'closed',
+                'labels': labels,
+                'changed_files_count': pr_dict.get('changed_files_count', 0),
+                'additions': pr_dict.get('additions', 0),
+                'deletions': pr_dict.get('deletions', 0),
+                'reviews': [
+                    {
+                        'reviewer_username': dict(r)['reviewer_username'],
+                        'state': dict(r).get('review_state', ''),
+                    }
+                    for r in reviews_rows
+                ],
+                'review_comments': [
+                    {
+                        'reviewer_username': dict(c)['reviewer_username'],
+                        'body': dict(c).get('body', ''),
+                    }
+                    for c in comments_rows
+                ],
+            })
+
+        conn.close()
+        return result

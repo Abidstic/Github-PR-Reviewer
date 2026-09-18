@@ -261,6 +261,22 @@ class AssignmentPipeline:
         logger.info("✅ Vector store created successfully")
         return True
 
+    def build_faiss_from_window(self, repo_name: str,
+                                save_to_disk: bool = True) -> bool:
+        """Build FAISS index from the rolling window's PR data."""
+        pr_data = self.window_manager.get_window_data_for_faiss(repo_name)
+        if not pr_data:
+            logger.warning("⚠️ No PRs in window — skipping FAISS build")
+            return False
+
+        logger.info(f"📦 Building FAISS from {len(pr_data)} window PRs...")
+        success = self.similarity_matcher.create_embeddings_from_reviewer_data(
+            pr_data
+        )
+        if success and save_to_disk:
+            self.similarity_matcher.save_vector_store("reviewer_vectors.faiss")
+        return success
+
 
 # Example usage and testing
 if __name__ == "__main__":

@@ -432,18 +432,13 @@ class WebhookHandler:
             self._indexing_repos.update(repos)
 
         def run():
-            # Imported here to avoid a circular import (app.py imports the
-            # webhook server, which imports this handler).
             from app import setup_mode
-            from src.profile_generator.profile_storage import ProfileStorage
 
-            # null/None in config = index ALL historical PRs
             max_prs = self.config.get('github.auto_setup_max_prs', None)
-            storage = ProfileStorage()
 
             for repo in repos:
                 try:
-                    if storage.list_reviewers(repo_name=repo):
+                    if self._window_manager.get_window_size(repo) > 0:
                         logger.info(f"⏭️ {repo} already indexed - skipping auto-setup")
                     else:
                         logger.info(f"🚀 Auto-setup starting for {repo} ({max_prs or 'ALL'} PRs)")
@@ -452,8 +447,6 @@ class WebhookHandler:
                 except Exception as e:
                     logger.error(f"❌ Auto-setup failed for {repo}: {e}")
                 finally:
-                    # Whatever happened, unblock the repo and replay any PRs
-                    # that arrived while it was indexing.
                     with self._state_lock:
                         self._indexing_repos.discard(repo)
                         pending = self._pending_prs.pop(repo, [])
