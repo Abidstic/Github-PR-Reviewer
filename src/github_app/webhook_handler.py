@@ -64,7 +64,9 @@ class WebhookHandler:
             with self._pipeline_lock:
                 if self._pipeline is None:
                     logger.info("⏳ First PR: loading AssignmentPipeline singleton (model + index)...")
-                    self._pipeline = AssignmentPipeline()
+                    self._pipeline = AssignmentPipeline(
+                        window_manager=self._window_manager
+                    )
         return self._pipeline
 
     def _get_profile_builder(self):

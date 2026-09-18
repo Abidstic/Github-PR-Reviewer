@@ -1,12 +1,16 @@
 """
 Reviewer Matcher
-Matches best reviewers for PRs using hybrid scoring algorithm
+Matches best reviewers for PRs using hybrid scoring algorithm.
+
+Phase 5: reads unified profiles from WindowManager (SQLite) instead of
+ProfileStorage.  Developers (is_developer=1) are now candidates too.
 """
 
+import json
+import math
 from typing import Dict, List, Optional, Tuple
-from collections import defaultdict
 
-from src.profile_generator.profile_storage import ProfileStorage
+from src.storage.window_manager import WindowManager
 from src.reviewer_assigner.similarity_matcher import SimilarityMatcher
 from src.utils import get_logger, get_config
 
@@ -15,36 +19,27 @@ logger = get_logger(__name__)
 
 class ReviewerMatcher:
     """Matches reviewers to PRs using hybrid scoring"""
-    
+
     def __init__(
         self,
-        profile_storage: Optional[ProfileStorage] = None,
+        window_manager: Optional[WindowManager] = None,
         similarity_matcher: Optional[SimilarityMatcher] = None
     ):
-        """
-        Initialize reviewer matcher
-        
-        Args:
-            profile_storage: ProfileStorage instance (creates new if None)
-            similarity_matcher: SimilarityMatcher instance (creates new if None)
-        """
         self.config = get_config()
-        self.storage = profile_storage or ProfileStorage()
+        self.window_manager = window_manager or WindowManager()
         self.similarity_matcher = similarity_matcher
-        
-        # Get scoring weights from config
+
         self.weights = {
             'skill_frequency': self.config.get('reviewer_assignment.weights.skill_frequency', 0.4),
             'experience_level': self.config.get('reviewer_assignment.weights.experience_level', 0.2),
             'review_activity': self.config.get('reviewer_assignment.weights.review_activity', 0.2),
             'similarity_match': self.config.get('reviewer_assignment.weights.similarity_match', 0.2)
         }
-        
-        # Configuration
+
         self.top_k = self.config.get('reviewer_assignment.top_k_reviewers', 3)
         self.min_confidence = self.config.get('reviewer_assignment.min_confidence_score', 0.4)
         self.exclude_author = self.config.get('reviewer_assignment.exclude_pr_author', True)
-        
+
         logger.info(f"✅ Reviewer Matcher initialized (weights: {self.weights})")
     
     def match_reviewers(
@@ -177,29 +172,29 @@ class ReviewerMatcher:
         exclude_author: Optional[str] = None
     ) -> Dict[str, Dict]:
         """
-        Get reviewer profiles filtered by repository
-        
-        Args:
-            repo_name: Filter by repository name
-            exclude_author: Username to exclude (PR author)
-        
+        Get candidate profiles (reviewers AND developers) for a repo.
+
         Returns:
-            Dictionary of {reviewer_name: profile}
+            Dictionary of {username: profile_row_dict}
         """
-        reviewer_names = self.storage.list_reviewers(repo_name=repo_name)
-        
+        if not repo_name:
+            return {}
+
+        all_users = self.window_manager.get_all_users(
+            repo_name, include_developers=True
+        )
+
         profiles = {}
-        for name in reviewer_names:
-            # CRITICAL: Exclude PR author
+        for user_row in all_users:
+            username = user_row['username']
+
             if self.exclude_author and exclude_author:
-                if name.lower() == exclude_author.lower():
-                    logger.debug(f"🔒 Excluding PR author: {name}")
+                if username.lower() == exclude_author.lower():
+                    logger.debug(f"🔒 Excluding PR author: {username}")
                     continue
-            
-            profile = self.storage.get_profile(name)
-            if profile:
-                profiles[name] = profile
-        
+
+            profiles[username] = user_row
+
         return profiles
     
     def _find_similar_prs_for_pr(self, pr_data: Dict) -> Optional[List[Tuple]]:
@@ -270,12 +265,10 @@ class ReviewerMatcher:
             similar_prs
         )
 
-        # 5. Repository Membership Bonus (New)
-        # Give a 0.5 bonus if they've reviewed this specific repo before
-        repo_bonus = 0.0
-        repo_name = pr_data.get('repo_name')
-        if repo_name and repo_name in profile.get('stats', {}).get('repos', []):
-            repo_bonus = 0.5
+        # 5. Repository Membership Bonus
+        # In the per-repo model all candidates belong to this repo, so
+        # the bonus applies universally.  Kept for scoring parity.
+        repo_bonus = 0.5
         
         # Calculate weighted total
         total = sum(scores[key] * self.weights[key] for key in scores.keys())
@@ -287,82 +280,68 @@ class ReviewerMatcher:
         
         return scores
     
+    @staticmethod
+    def _parse_skill_matrix(profile: Dict) -> Dict:
+        """Parse javascript_skill_matrix from a profile row (JSON string or dict)."""
+        raw = profile.get('javascript_skill_matrix')
+        if not raw:
+            return {}
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        return raw
+
     def _score_skill_frequency(self, profile: Dict, required_skills: List[str]) -> float:
-        """
-        Score based on skill frequency match
-        
-        Args:
-            profile: Reviewer profile
-            required_skills: Skills needed for PR
-        
-        Returns:
-            Score between 0.0 and 1.0
-        """
+        """Score based on skill frequency match (0.0–1.0)."""
         if not required_skills:
-            return 0.5  # Neutral score if no skills specified
-        
-        skill_matrix = profile.get('profile', {}).get('javascript_skill_matrix', {})
-        
-        # Extract all skills with frequencies
-        reviewer_skills = {}
-        for category_key, skills in skill_matrix.items():
+            return 0.5
+
+        skill_matrix = self._parse_skill_matrix(profile)
+
+        reviewer_skills: Dict[str, int] = {}
+        for _category_key, skills in skill_matrix.items():
+            if not isinstance(skills, list):
+                continue
             for skill in skills:
-                if ', frequency:' in skill:
-                    parts = skill.split(', frequency:')
+                if ', frequency:' in str(skill):
+                    parts = str(skill).split(', frequency:')
                     skill_name = parts[0].strip()
                     try:
                         frequency = int(parts[1].strip())
                         reviewer_skills[skill_name.lower()] = frequency
                     except (ValueError, IndexError):
                         pass
-        
+
         if not reviewer_skills:
             return 0.0
-        
-        # Find max frequency for normalization
-        max_frequency = max(reviewer_skills.values()) if reviewer_skills else 1
-        
-        # Score each required skill
+
+        max_frequency = max(reviewer_skills.values())
+
         skill_scores = []
         for required_skill in required_skills:
-            required_skill_lower = required_skill.lower()
-            
-            # Exact match
-            if required_skill_lower in reviewer_skills:
-                freq = reviewer_skills[required_skill_lower]
-                normalized_score = min(freq / max_frequency, 1.0)
-                skill_scores.append(normalized_score)
-            # Partial match (e.g., "Express" matches "Express.js")
+            req_lower = required_skill.lower()
+
+            if req_lower in reviewer_skills:
+                freq = reviewer_skills[req_lower]
+                skill_scores.append(min(freq / max_frequency, 1.0))
             else:
                 partial_matches = [
                     freq for skill, freq in reviewer_skills.items()
-                    if required_skill_lower in skill or skill in required_skill_lower
+                    if req_lower in skill or skill in req_lower
                 ]
                 if partial_matches:
                     freq = max(partial_matches)
-                    normalized_score = min(freq / max_frequency, 1.0) * 0.8  # Penalty for partial match
-                    skill_scores.append(normalized_score)
+                    skill_scores.append(min(freq / max_frequency, 1.0) * 0.8)
                 else:
                     skill_scores.append(0.0)
-        
-        # Average score
-        if skill_scores:
-            return sum(skill_scores) / len(skill_scores)
-        else:
-            return 0.0
+
+        return sum(skill_scores) / len(skill_scores) if skill_scores else 0.0
     
     def _score_experience_level(self, profile: Dict, complexity: str) -> float:
-        """
-        Score based on experience level match
-        
-        Args:
-            profile: Reviewer profile
-            complexity: PR complexity (Low/Medium/High)
-        
-        Returns:
-            Score between 0.0 and 1.0
-        """
-        experience = profile.get('profile', {}).get('experience_level', 'Mid')
+        """Score based on experience level match (0.0–1.0)."""
+        experience = profile.get('experience_level') or 'Mid'
         
         # Matching matrix
         match_scores = {
@@ -389,24 +368,9 @@ class ReviewerMatcher:
         return match_scores.get(complexity, {}).get(experience, 0.5)
     
     def _score_review_activity(self, profile: Dict) -> float:
-        """
-        Score based on review activity level
-        
-        Args:
-            profile: Reviewer profile
-        
-        Returns:
-            Score between 0.0 and 1.0
-        """
-        stats = profile.get('stats', {})
-        total_reviews = stats.get('total_reviews', 0)
-        
-        # Normalize: More reviews is better, but even 1 review is a start
-        # Using min(sqrt(total / 10), 1.0) so 1 review gives 0.31, 5 gives 0.7, 10+ gives 1.0
-        import math
-        score = min(math.sqrt(total_reviews / 10.0), 1.0)
-        
-        return score
+        """Score based on review activity level (0.0–1.0)."""
+        total_reviews = profile.get('total_reviews', 0)
+        return min(math.sqrt(total_reviews / 10.0), 1.0)
     
     def _score_similarity_match(
         self,
@@ -459,12 +423,9 @@ class ReviewerMatcher:
         profile: Dict,
         pr_requirements: Dict
     ) -> Dict:
-        """Build recommendation dictionary with reasoning"""
-        
-        # Build reasoning
+        """Build recommendation dictionary with reasoning."""
         reasoning_parts = []
-        
-        # Skill match reasoning
+
         skill_score = score_breakdown['skill_frequency']
         if skill_score > 0.7:
             top_skills = self._get_top_skills(profile, pr_requirements.get('technical_skills_needed', []))
@@ -472,41 +433,35 @@ class ReviewerMatcher:
                 reasoning_parts.append(f"High frequency in {', '.join(top_skills)}")
         elif skill_score > 0.4:
             reasoning_parts.append("Moderate skill match")
-        
-        # Experience reasoning
+
         exp_score = score_breakdown['experience_level']
-        experience = profile.get('profile', {}).get('experience_level', 'Mid')
+        experience = profile.get('experience_level') or 'Mid'
         complexity = pr_requirements.get('complexity_level', 'Medium')
         if exp_score > 0.8:
             reasoning_parts.append(f"{experience} experience matches {complexity} complexity")
-        
-        # Activity reasoning
+
         activity_score = score_breakdown['review_activity']
-        total_reviews = profile.get('stats', {}).get('total_reviews', 0)
+        total_reviews = profile.get('total_reviews', 0)
         if activity_score > 0.5:
             reasoning_parts.append(f"Active reviewer ({total_reviews} reviews)")
-        
-        # Similarity reasoning
+
         sim_score = score_breakdown['similarity_match']
         if sim_score > 0.5:
-            reasoning_parts.append(f"Reviewed similar PRs")
-        
+            reasoning_parts.append("Reviewed similar PRs")
+
         reasoning = "; ".join(reasoning_parts) if reasoning_parts else "General match"
-        
-        # Get strengths
+
         strengths = self._get_matching_strengths(profile, pr_requirements)
-        
-        # Review experience string
-        stats = profile.get('stats', {})
-        review_exp = f"{stats.get('total_reviews', 0)} reviews, {stats.get('total_prs', 0)} PRs"
-        
-        # Potential concerns
+
+        total_authored = profile.get('total_prs_authored', 0)
+        review_exp = f"{total_reviews} reviews, {total_authored} PRs authored"
+
         concerns = "None identified"
         if skill_score < 0.3:
             concerns = "Limited skill match"
         elif activity_score < 0.2:
             concerns = "Low review activity"
-        
+
         return {
             'reviewer_name': reviewer_name,
             'match_score': round(total_score, 3),
@@ -517,37 +472,49 @@ class ReviewerMatcher:
         }
     
     def _get_top_skills(self, profile: Dict, required_skills: List[str]) -> List[str]:
-        """Get top matching skills with frequencies"""
-        skill_matrix = profile.get('profile', {}).get('javascript_skill_matrix', {})
-        
+        """Get top matching skills with frequencies."""
+        skill_matrix = self._parse_skill_matrix(profile)
+
         matches = []
-        for category_key, skills in skill_matrix.items():
+        for _category_key, skills in skill_matrix.items():
+            if not isinstance(skills, list):
+                continue
             for skill in skills:
-                if ', frequency:' in skill:
-                    parts = skill.split(', frequency:')
+                if ', frequency:' in str(skill):
+                    parts = str(skill).split(', frequency:')
                     skill_name = parts[0].strip()
                     frequency = parts[1].strip()
-                    
-                    # Check if required
                     for req_skill in required_skills:
                         if req_skill.lower() in skill_name.lower() or skill_name.lower() in req_skill.lower():
                             matches.append(f"{skill_name} ({frequency}x)")
-        
-        return matches[:3]  # Top 3
+
+        return matches[:3]
     
+    @staticmethod
+    def _parse_json_field(profile: Dict, key: str) -> list:
+        """Parse a JSON-encoded list field from a profile row."""
+        raw = profile.get(key)
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return raw
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return []
+
     def _get_matching_strengths(self, profile: Dict, pr_requirements: Dict) -> List[str]:
-        """Get reviewer strengths that match PR requirements"""
-        primary_skills = profile.get('profile', {}).get('primary_skills', [])
+        """Get reviewer strengths that match PR requirements."""
+        primary_skills = self._parse_json_field(profile, 'primary_skills')
         required_skills = pr_requirements.get('technical_skills_needed', [])
-        
-        # Find overlaps
+
         matches = []
-        for skill in primary_skills[:5]:  # Top 5 primary skills
+        for skill in primary_skills[:5]:
             for req_skill in required_skills:
                 if req_skill.lower() in skill.lower() or skill.lower() in req_skill.lower():
                     if skill not in matches:
                         matches.append(skill)
-        
+
         return matches if matches else primary_skills[:3]
     
     def _determine_confidence(self, avg_score: float) -> str:
@@ -583,7 +550,7 @@ class ReviewerMatcher:
             reasoning_parts.append(f"Covering {len(required_skills)} required skills")
         
         # Experience distribution
-        experiences = [r['profile'].get('profile', {}).get('experience_level', 'Mid') for r in top_reviewers]
+        experiences = [r['profile'].get('experience_level') or 'Mid' for r in top_reviewers]
         unique_exp = set(experiences)
         if len(unique_exp) > 1:
             reasoning_parts.append(f"Diverse experience levels ({', '.join(unique_exp)})")
@@ -591,12 +558,15 @@ class ReviewerMatcher:
         return ". ".join(reasoning_parts)
     
     def _track_assignment(self, pr_data: Dict, recommendations: List[Dict], confidence_score: float):
-        """Track assignment in database"""
+        """Track assignment in database."""
         try:
-            self.storage.track_assignment(
+            pr_author = 'Unknown'
+            if pr_data.get('author'):
+                pr_author = pr_data['author'].get('username', 'Unknown')
+            self.window_manager.track_assignment(
                 pr_number=pr_data.get('pr_number', 0),
                 repo_name=pr_data.get('repo_name', 'Unknown'),
-                pr_author=pr_data.get('author', {}).get('username', 'Unknown') if pr_data.get('author') else 'Unknown',
+                pr_author=pr_author,
                 suggested_reviewers=[r['reviewer_name'] for r in recommendations],
                 confidence_score=confidence_score
             )
@@ -616,8 +586,7 @@ class ReviewerMatcher:
 if __name__ == "__main__":
     print("🎯 Testing Reviewer Matcher")
     print("=" * 60)
-    
-    # Sample PR requirements (from PRAnalyzer)
+
     sample_requirements = {
         "technical_skills_needed": ["Node.js", "Express.js", "Jest"],
         "expertise_areas_needed": ["Backend", "Testing"],
@@ -626,8 +595,7 @@ if __name__ == "__main__":
         "primary_language": "JavaScript",
         "frameworks_involved": ["Express.js", "Jest"]
     }
-    
-    # Sample PR data
+
     sample_pr_data = {
         'pr_number': 1234,
         'title': 'Fix Express.js routing bug',
@@ -635,33 +603,16 @@ if __name__ == "__main__":
         'author': {'username': 'developer1'},
         'repo_name': 'moment/moment'
     }
-    
+
     try:
-        # Initialize matcher
         matcher = ReviewerMatcher()
-        print("✅ Matcher initialized")
-        
-        # Match reviewers
-        print("\n🎯 Matching reviewers...")
         result = matcher.match_reviewers(sample_requirements, sample_pr_data)
-        
-        print(f"\n✅ Assignment Confidence: {result['assignment_confidence']}")
-        print(f"📝 Reasoning: {result['assignment_reasoning']}")
-        
-        print(f"\n👥 Recommended Reviewers ({len(result['recommended_reviewers'])}):")
-        print("=" * 60)
-        
+
+        print(f"Assignment Confidence: {result['assignment_confidence']}")
+        print(f"Reviewers: {len(result['recommended_reviewers'])}")
         for i, rec in enumerate(result['recommended_reviewers'], 1):
-            print(f"\n{i}. {rec['reviewer_name']} (Match: {rec['match_score']:.1%})")
-            print(f"   💡 {rec['reasoning']}")
-            print(f"   ⭐ Strengths: {', '.join(rec['strengths_alignment'])}")
-            print(f"   📊 Experience: {rec['review_experience']}")
-            if rec['potential_concerns'] != "None identified":
-                print(f"   ⚠️  Concerns: {rec['potential_concerns']}")
-        
-        print("\n✅ Reviewer Matcher working correctly!")
-        
+            print(f"  {i}. {rec['reviewer_name']} ({rec['match_score']:.1%})")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         import traceback
         traceback.print_exc()
