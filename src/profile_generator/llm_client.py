@@ -50,7 +50,7 @@ class LLMClient:
             }
         )
         
-        logger.info(f"✅ LLM client initialized (model: {self.model} via OpenRouter)")
+        logger.info(f"✅ LLM client initialized (model: {self.model} via {self.api_base})")
 
     def load_prompt_template(self, template_name: str) -> str:
         """Load prompt template from file"""
@@ -84,20 +84,20 @@ class LLMClient:
         start_time = time.time()
         
         try:
-            # OpenRouter provider routing: some fallback providers (e.g. Novita)
-            # advertise this model but reject the request ("does not support
-            # endpoint"), which burned all retries in production. Ignore them.
-            ignore_providers = self.config.get('llm.ignore_providers', ['Novita'])
-            extra_body = {"provider": {"ignore": ignore_providers}} if ignore_providers else {}
-
-            # Use direct OpenAI completion call
-            completion = self.client.chat.completions.create(
+            kwargs = dict(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt_text}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                extra_body=extra_body
             )
+
+            # OpenRouter-specific provider routing (ignored by other APIs)
+            if 'openrouter.ai' in self.api_base:
+                ignore_providers = self.config.get('llm.ignore_providers', ['Novita'])
+                if ignore_providers:
+                    kwargs['extra_body'] = {"provider": {"ignore": ignore_providers}}
+
+            completion = self.client.chat.completions.create(**kwargs)
             
             response = completion.choices[0].message.content
             
