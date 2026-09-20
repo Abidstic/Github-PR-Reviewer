@@ -181,13 +181,43 @@ def setup_mode(repo: str, max_prs: int = None,
     logger.info("=" * 80)
 
     if is_fork:
-        github_client = GitHubClient()
+        # Fetch fork's own PRs first (using installation auth)
+        fork_client = GitHubClient(installation_id=installation_id)
+        logger.info(f"Fetching fork PRs from {owner}/{repo_name}...")
+        fork_prs = _fetch_merged_prs(
+            fork_client, owner, repo_name, max_prs, label_repo
+        )
+        logger.info(f"Found {len(fork_prs)} merged PRs in fork")
+
+        # Fill remaining slots from parent repo (using GITHUB_TOKEN)
+        remaining = max_prs - len(fork_prs)
+        parent_prs = []
+        if remaining > 0:
+            parent_client = GitHubClient()
+            logger.info(
+                f"Fetching {remaining} PRs from parent "
+                f"{source_owner}/{source_repo}..."
+            )
+            parent_prs = _fetch_merged_prs(
+                parent_client, source_owner, source_repo,
+                remaining, label_repo
+            )
+            logger.info(f"Found {len(parent_prs)} merged PRs in parent")
+
+        # Combine: sort all by merged_at oldest-first
+        pr_list = fork_prs + parent_prs
+        pr_list.sort(
+            key=lambda x: x['pr_data'].get('merged_at') or ''
+        )
+        logger.info(
+            f"Combined window: {len(fork_prs)} fork + "
+            f"{len(parent_prs)} parent = {len(pr_list)} total"
+        )
     else:
         github_client = GitHubClient(installation_id=installation_id)
-
-    pr_list = _fetch_merged_prs(
-        github_client, source_owner, source_repo, max_prs, label_repo
-    )
+        pr_list = _fetch_merged_prs(
+            github_client, owner, repo_name, max_prs, label_repo
+        )
 
     if not pr_list:
         logger.warning("No merged PRs found")
