@@ -1,17 +1,21 @@
 """
 Webhook Handler
-Processes incoming GitHub webhook events and triggers the assignment pipeline
+Processes incoming GitHub webhook events and triggers the assignment pipeline.
+
+Phase 4 additions: handles pull_request.closed (merged) events to feed the
+rolling window and update unified profiles via LLM.
 """
 
 import hmac
 import hashlib
 import json
 import threading
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 
 from src.reviewer_assigner.assignment_pipeline import AssignmentPipeline
 from src.github_app.github_poster import GitHubPoster
 from src.data_fetcher.github_client import GitHubClient
+from src.storage.window_manager import WindowManager
 from src.utils import get_logger, get_config
 
 logger = get_logger(__name__)
@@ -30,6 +34,9 @@ class WebhookHandler:
         self.config = get_config()
         self.webhook_secret = webhook_secret
 
+        # Rolling window manager (lightweight — just SQLite)
+        self._window_manager = WindowManager()
+
         # Singleton AssignmentPipeline: loading it means loading the
         # sentence-transformers model + FAISS index, which is expensive
         # (tens of seconds + hundreds of MB). It used to be re-created for
@@ -37,6 +44,10 @@ class WebhookHandler:
         # Lazy (not eager) so server boot stays fast for health checks.
         self._pipeline: Optional[AssignmentPipeline] = None
         self._pipeline_lock = threading.Lock()
+
+        # Lazy-loaded UnifiedProfileBuilder (needs LLM client — expensive)
+        self._profile_builder = None
+        self._profile_builder_lock = threading.Lock()
 
         # Repos currently being auto-indexed, and PRs that arrived during
         # indexing (queued for replay once indexing completes). In-memory:
@@ -53,8 +64,22 @@ class WebhookHandler:
             with self._pipeline_lock:
                 if self._pipeline is None:
                     logger.info("⏳ First PR: loading AssignmentPipeline singleton (model + index)...")
-                    self._pipeline = AssignmentPipeline()
+                    self._pipeline = AssignmentPipeline(
+                        window_manager=self._window_manager
+                    )
         return self._pipeline
+
+    def _get_profile_builder(self):
+        """Return the shared UnifiedProfileBuilder, creating it once (thread-safe)."""
+        if self._profile_builder is None:
+            with self._profile_builder_lock:
+                if self._profile_builder is None:
+                    from src.profile_generator.unified_profile_builder import UnifiedProfileBuilder
+                    logger.info("⏳ Loading UnifiedProfileBuilder (LLM client)...")
+                    self._profile_builder = UnifiedProfileBuilder(
+                        window_manager=self._window_manager
+                    )
+        return self._profile_builder
 
     def handle_event(
         self, 
@@ -133,12 +158,16 @@ class WebhookHandler:
         action = payload.get('action')
         pr_data_raw = payload.get('pull_request', {})
         repo_data = payload.get('repository', {})
-        
+
         logger.info(f"📥 Received pull_request event: action={action}")
-        
+
+        # Handle merged PRs (closed + merged=true)
+        if action == 'closed' and pr_data_raw.get('merged', False):
+            return self._handle_pr_merged(pr_data_raw, repo_data, installation_id)
+
         if action not in ['opened', 'reopened']:
             return {'status': 'ignored', 'message': f'Action {action} is not processed'}
-        
+
         if pr_data_raw.get('draft', False):
             return {'status': 'skipped', 'message': 'Draft PRs are not processed'}
 
@@ -188,6 +217,156 @@ class WebhookHandler:
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}")
             return {'status': 'error', 'message': f'Failed to process PR: {str(e)}'}
+
+    # ------------------------------------------------------------------
+    # PR Merged handler (Phase 4 — rolling window)
+    # ------------------------------------------------------------------
+
+    def _handle_pr_merged(self, pr_data_raw: Dict, repo_data: Dict,
+                          installation_id: Optional[int]) -> Dict:
+        """
+        Process a merged PR: add to rolling window, update profiles, evict.
+
+        This is the new Phase 4 handler for pull_request.closed (merged=true).
+        """
+        pr_number = pr_data_raw.get('number')
+        repo_full_name = repo_data.get('full_name', '')
+
+        logger.info(f"🔀 PR #{pr_number} merged in {repo_full_name}")
+
+        # Skip if already in window (webhook redelivery)
+        if self._window_manager.is_pr_in_window(repo_full_name, pr_number):
+            logger.info(f"PR #{pr_number} already in window — skipping")
+            return {'status': 'skipped', 'message': 'PR already in window'}
+
+        # Ensure repo is registered
+        is_fork = repo_data.get('fork', False)
+        parent_repo = None
+        if is_fork and repo_data.get('parent'):
+            parent_repo = repo_data['parent'].get('full_name')
+        self._window_manager.init_repo(repo_full_name, is_fork, parent_repo)
+
+        # Build GitHub client for this installation
+        github_client = GitHubClient(installation_id=installation_id)
+
+        try:
+            owner, repo_name = repo_full_name.split('/')
+        except ValueError:
+            logger.error(f"Invalid repo name: {repo_full_name}")
+            return {'status': 'error', 'message': 'Invalid repo name'}
+
+        # Fetch file list, reviews, and review comments from GitHub API
+        files = github_client.get_pr_files(owner, repo_name, pr_number)
+        changed_files = [f.get('filename') for f in (files or [])]
+
+        raw_reviews = github_client.get_pr_reviews(
+            owner, repo_name, pr_number
+        ) or []
+        raw_review_comments = github_client.get_pr_review_comments(
+            owner, repo_name, pr_number
+        ) or []
+
+        # Transform payload + API data into WindowManager format
+        pr_data = self._extract_merged_pr_data(
+            pr_data_raw, repo_full_name, changed_files
+        )
+        reviews = self._transform_reviews(raw_reviews)
+        review_comments = self._transform_review_comments(raw_review_comments)
+
+        # Add to rolling window
+        pr_window_id = self._window_manager.add_pr(
+            pr_data, reviews, review_comments
+        )
+
+        if pr_window_id is None:
+            return {'status': 'skipped', 'message': 'PR not added (duplicate)'}
+
+        # Evict oldest if window exceeds max size
+        evicted = self._window_manager.evict_if_full(repo_full_name)
+        if evicted:
+            logger.info(
+                f"Evicted PR #{evicted['pr_number']} to maintain window size"
+            )
+
+        # Update profiles in background (LLM calls are slow)
+        def update_profiles_bg():
+            try:
+                builder = self._get_profile_builder()
+                results = builder.update_profiles_for_merged_pr(
+                    pr_window_id, repo_full_name
+                )
+                succeeded = sum(1 for v in results.values() if v)
+                logger.info(
+                    f"✅ Profile updates for PR #{pr_number}: "
+                    f"{succeeded}/{len(results)} succeeded"
+                )
+            except Exception as e:
+                logger.error(
+                    f"❌ Profile update failed for PR #{pr_number}: {e}"
+                )
+
+        threading.Thread(target=update_profiles_bg, daemon=True).start()
+
+        return {
+            'status': 'success',
+            'message': f'PR #{pr_number} added to window (id={pr_window_id})',
+            'repo': repo_full_name,
+            'pr': pr_number,
+            'window_id': pr_window_id,
+        }
+
+    @staticmethod
+    def _extract_merged_pr_data(pr_raw: Dict, repo_full_name: str,
+                                 changed_files: List[str]) -> Dict:
+        """Transform GitHub webhook PR payload into WindowManager format."""
+        return {
+            'repo_name': repo_full_name,
+            'pr_number': pr_raw.get('number'),
+            'title': pr_raw.get('title') or '',
+            'description': pr_raw.get('body') or '',
+            'author_username': pr_raw.get('user', {}).get('login', ''),
+            'author_id': pr_raw.get('user', {}).get('id'),
+            'created_at': pr_raw.get('created_at'),
+            'merged_at': pr_raw.get('merged_at'),
+            'additions': pr_raw.get('additions', 0),
+            'deletions': pr_raw.get('deletions', 0),
+            'changed_files': changed_files,
+            'changed_files_count': len(changed_files),
+            'labels': [l.get('name') for l in pr_raw.get('labels', [])],
+        }
+
+    @staticmethod
+    def _transform_reviews(raw_reviews: List[Dict]) -> List[Dict]:
+        """Transform GitHub API review objects into WindowManager format."""
+        return [
+            {
+                'reviewer_username': r.get('user', {}).get('login', ''),
+                'reviewer_id': r.get('user', {}).get('id'),
+                'review_state': r.get('state', ''),
+                'review_body': r.get('body') or '',
+                'submitted_at': r.get('submitted_at'),
+                'author_association': r.get('author_association'),
+            }
+            for r in raw_reviews
+            if r.get('user')
+        ]
+
+    @staticmethod
+    def _transform_review_comments(raw_comments: List[Dict]) -> List[Dict]:
+        """Transform GitHub API review comment objects into WindowManager format."""
+        return [
+            {
+                'reviewer_username': c.get('user', {}).get('login', ''),
+                'reviewer_id': c.get('user', {}).get('id'),
+                'body': c.get('body') or '',
+                'file_path': c.get('path', ''),
+                'line_number': c.get('line') or c.get('original_line'),
+                'submitted_at': c.get('created_at'),
+                'author_association': c.get('author_association'),
+            }
+            for c in raw_comments
+            if c.get('user')
+        ]
 
     def handle_installation_event(self, payload: Dict) -> Dict:
         """
@@ -253,18 +432,13 @@ class WebhookHandler:
             self._indexing_repos.update(repos)
 
         def run():
-            # Imported here to avoid a circular import (app.py imports the
-            # webhook server, which imports this handler).
             from app import setup_mode
-            from src.profile_generator.profile_storage import ProfileStorage
 
-            # null/None in config = index ALL historical PRs
             max_prs = self.config.get('github.auto_setup_max_prs', None)
-            storage = ProfileStorage()
 
             for repo in repos:
                 try:
-                    if storage.list_reviewers(repo_name=repo):
+                    if self._window_manager.get_window_size(repo) > 0:
                         logger.info(f"⏭️ {repo} already indexed - skipping auto-setup")
                     else:
                         logger.info(f"🚀 Auto-setup starting for {repo} ({max_prs or 'ALL'} PRs)")
@@ -273,8 +447,6 @@ class WebhookHandler:
                 except Exception as e:
                     logger.error(f"❌ Auto-setup failed for {repo}: {e}")
                 finally:
-                    # Whatever happened, unblock the repo and replay any PRs
-                    # that arrived while it was indexing.
                     with self._state_lock:
                         self._indexing_repos.discard(repo)
                         pending = self._pending_prs.pop(repo, [])

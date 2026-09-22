@@ -62,8 +62,8 @@ def trigger_setup():
     def run_setup():
         try:
             if force:
-                from src.profile_generator.profile_storage import ProfileStorage
-                ProfileStorage().clear_pr_checkpoints(repo)
+                from src.storage.window_manager import WindowManager
+                WindowManager().clear_window(repo)
             setup_mode(repo=repo, installation_id=installation_id)
             logger.info(f"Setup completed for {repo}")
         except Exception as e:

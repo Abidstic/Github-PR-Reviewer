@@ -1,12 +1,15 @@
 """
 Assignment Pipeline
-Complete end-to-end workflow for PR reviewer assignment
+Complete end-to-end workflow for PR reviewer assignment.
+
+Phase 5: reads unified profiles from WindowManager (SQLite) instead of
+ProfileStorage.  ProfileStorage is no longer imported.
 """
 
 from typing import Dict, Optional
 from pathlib import Path
 
-from src.profile_generator.profile_storage import ProfileStorage
+from src.storage.window_manager import WindowManager
 from src.reviewer_assigner.similarity_matcher import SimilarityMatcher
 from src.reviewer_assigner.pr_analyzer import PRAnalyzer
 from src.reviewer_assigner.reviewer_matcher import ReviewerMatcher
@@ -19,57 +22,52 @@ logger = get_logger(__name__)
 
 class AssignmentPipeline:
     """Complete pipeline for reviewer assignment"""
-    
+
     def __init__(
         self,
         github_token: Optional[str] = None,
         installation_id: Optional[int] = None,
-        load_vector_store: bool = True
+        load_vector_store: bool = True,
+        window_manager: Optional[WindowManager] = None
     ):
         """
-        Initialize assignment pipeline
-        
+        Initialize assignment pipeline.
+
         Args:
             github_token: GitHub token (optional)
             installation_id: GitHub App installation ID (for app auth)
             load_vector_store: Whether to load existing vector store
+            window_manager: Shared WindowManager (creates one if None)
         """
         self.config = get_config()
         self.installation_id = installation_id
-        
+
         logger.info("🚀 Initializing Assignment Pipeline...")
-        
-        # Initialize components
-        self.storage = ProfileStorage()
+
+        self.window_manager = window_manager or WindowManager()
         self.pr_analyzer = PRAnalyzer()
         self.formatter = SuggestionFormatter()
-        
-        # Initialize similarity matcher
+
         self.similarity_matcher = SimilarityMatcher()
-        
-        # Try to load existing vector store
+
         if load_vector_store:
             vector_store_path = "reviewer_vectors.faiss"
             if self.similarity_matcher.load_vector_store(vector_store_path):
                 logger.info("✅ Loaded existing vector store")
             else:
                 logger.warning("⚠️ No vector store found - similarity matching will be limited")
-        
-        # Initialize reviewer matcher
+
         self.reviewer_matcher = ReviewerMatcher(
-            profile_storage=self.storage,
+            window_manager=self.window_manager,
             similarity_matcher=self.similarity_matcher
         )
-        
-        # Initialize GitHub poster (optional).
-        # installation_id is passed through so App-installation auth is used
-        # when available (multi-tenant posting); falls back to GITHUB_TOKEN.
+
         try:
             self.github_poster = GitHubPoster(github_token, installation_id=installation_id)
         except ValueError:
             logger.warning("⚠️ GitHub poster not initialized - posting disabled")
             self.github_poster = None
-        
+
         logger.info("✅ Assignment Pipeline initialized")
     
     def process_pr(
@@ -262,6 +260,22 @@ class AssignmentPipeline:
         
         logger.info("✅ Vector store created successfully")
         return True
+
+    def build_faiss_from_window(self, repo_name: str,
+                                save_to_disk: bool = True) -> bool:
+        """Build FAISS index from the rolling window's PR data."""
+        pr_data = self.window_manager.get_window_data_for_faiss(repo_name)
+        if not pr_data:
+            logger.warning("⚠️ No PRs in window — skipping FAISS build")
+            return False
+
+        logger.info(f"📦 Building FAISS from {len(pr_data)} window PRs...")
+        success = self.similarity_matcher.create_embeddings_from_reviewer_data(
+            pr_data
+        )
+        if success and save_to_disk:
+            self.similarity_matcher.save_vector_store("reviewer_vectors.faiss")
+        return success
 
 
 # Example usage and testing

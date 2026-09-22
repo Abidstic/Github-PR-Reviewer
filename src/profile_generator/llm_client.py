@@ -50,7 +50,7 @@ class LLMClient:
             }
         )
         
-        logger.info(f"✅ LLM client initialized (model: {self.model} via OpenRouter)")
+        logger.info(f"✅ LLM client initialized (model: {self.model} via {self.api_base})")
 
     def load_prompt_template(self, template_name: str) -> str:
         """Load prompt template from file"""
@@ -84,20 +84,20 @@ class LLMClient:
         start_time = time.time()
         
         try:
-            # OpenRouter provider routing: some fallback providers (e.g. Novita)
-            # advertise this model but reject the request ("does not support
-            # endpoint"), which burned all retries in production. Ignore them.
-            ignore_providers = self.config.get('llm.ignore_providers', ['Novita'])
-            extra_body = {"provider": {"ignore": ignore_providers}} if ignore_providers else {}
-
-            # Use direct OpenAI completion call
-            completion = self.client.chat.completions.create(
+            kwargs = dict(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt_text}],
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                extra_body=extra_body
             )
+
+            # OpenRouter-specific provider routing (ignored by other APIs)
+            if 'openrouter.ai' in self.api_base:
+                ignore_providers = self.config.get('llm.ignore_providers', ['Novita'])
+                if ignore_providers:
+                    kwargs['extra_body'] = {"provider": {"ignore": ignore_providers}}
+
+            completion = self.client.chat.completions.create(**kwargs)
             
             response = completion.choices[0].message.content
             
@@ -110,40 +110,81 @@ class LLMClient:
             logger.error(f"❌ LLM generation failed: {e}")
             raise
 
+    @staticmethod
+    def _clean_json_string(text: str) -> str:
+        """Strip JS-style comments and fix multi-line strings for JSON parsing."""
+        import re
+        lines = text.split('\n')
+        cleaned = []
+        for line in lines:
+            stripped = line.rstrip()
+            # Remove trailing // comments (but not inside quoted strings)
+            # Find // that isn't inside a quoted value
+            in_string = False
+            escape_next = False
+            comment_start = -1
+            for i, ch in enumerate(stripped):
+                if escape_next:
+                    escape_next = False
+                    continue
+                if ch == '\\':
+                    escape_next = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                elif not in_string and ch == '/' and i + 1 < len(stripped) and stripped[i + 1] == '/':
+                    comment_start = i
+                    break
+            if comment_start >= 0:
+                stripped = stripped[:comment_start].rstrip()
+                # Remove trailing comma left before a comment on the same line
+                if stripped.endswith(',') and not stripped.endswith('",'):
+                    pass  # trailing comma is fine if next line has content
+            cleaned.append(stripped)
+
+        result = '\n'.join(cleaned)
+
+        # Collapse multi-line string values: replace unescaped newlines inside
+        # JSON string values with a space
+        def _fix_multiline_strings(m: re.Match) -> str:
+            val = m.group(0)
+            inner = val[1:-1]  # strip surrounding quotes
+            inner = inner.replace('\n', ' ').replace('\r', '')
+            inner = re.sub(r'\s{2,}', ' ', inner)
+            return '"' + inner + '"'
+
+        result = re.sub(r'"(?:[^"\\]|\\.)*"', _fix_multiline_strings, result, flags=re.DOTALL)
+        return result
+
     def _extract_json(self, text: str) -> Dict:
         """Extract JSON safely from LLM text"""
         import re
-        
+
+        candidates = []
+
         # 1. Try to find JSON block using markdown indicators
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
         if json_match:
-            try:
-                content = json_match.group(1).strip()
-                return json.loads(content)
-            except json.JSONDecodeError:
-                # If markdown content is not valid JSON, fall through to other methods
-                pass
+            candidates.append(json_match.group(1).strip())
 
         # 2. Try finding the outermost brackets
         start = text.find('{')
         end = text.rfind('}')
         if start != -1 and end != -1 and end > start:
-            json_str = text[start:end+1]
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError:
-                # If greedy match fails, try smaller potential JSON objects
-                # (less robust but might catch something)
-                pass
+            candidates.append(text[start:end+1])
 
-        # 3. Last resort: regex search for anything between braces
-        # using a non-greedy approach for potentially multiple objects
-        brace_matches = re.finditer(r'\{.*?\}', text, re.DOTALL)
-        for match in brace_matches:
+        for raw in candidates:
+            # Try raw first
             try:
-                return json.loads(match.group())
+                return json.loads(raw)
             except json.JSONDecodeError:
-                continue
+                pass
+            # Try after cleaning comments and multi-line strings
+            try:
+                cleaned = self._clean_json_string(raw)
+                return json.loads(cleaned)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         # If all else fails
         logger.error(f"❌ Failed to extract JSON from response. Raw text:\n{text}")
