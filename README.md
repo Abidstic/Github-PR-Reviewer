@@ -2,12 +2,12 @@
 
 AI-powered code reviewer assignment system using **Frequency-Weighted Skill Matching** and **Knowledge Unit (KU)** indexing.
 
-**📦 GitHub App (public link): https://github.com/apps/reviewermatch**
+**📦 GitHub App (public link): [https://github.com/apps/kairoreviewer](https://github.com/apps/kairoreviewer)**
 
 ## 🚀 Install & Use (GitHub App)
 
 ### Step 1 — Install the app on your repository
-1. Open **https://github.com/apps/reviewermatch**
+1. Open **https://github.com/apps/kairoreviewer**
 2. Click **Install** (or **Configure** if already installed)
 3. Choose the account/organization, then select **Only select repositories** and pick the repo(s) you want reviewer suggestions on
 4. Confirm. The app now receives `pull_request` events for those repos.
@@ -161,7 +161,7 @@ This system is designed to prove that **Frequency-Weighted KU Matching** signifi
 <!-- Replace the badge below with the real one from Zenodo after the first release -->
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21306453.svg)](https://doi.org/10.5281/zenodo.21306453)
 
-If you use ReviewerMatch in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
+If you use kairoreviewer in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
 
 ```
 Abid, M. (2026). ReviewerMatch: AI-Powered Code Reviewer Assignment using
