@@ -159,13 +159,13 @@ This system is designed to prove that **Frequency-Weighted KU Matching** signifi
 ## 📖 Citation
 
 <!-- Replace the badge below with the real one from Zenodo after the first release -->
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21306453.svg)](https://doi.org/10.5281/zenodo.21306453)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21306452.svg)](https://doi.org/10.5281/zenodo.21306452)
 
 If you use kairoreviewer in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
 
 ```
 Abid, M. (2026). kairoreviewer: AI-Powered Code Reviewer Assignment using
-Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.21306453
+Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.21306452
 ```
 
 **License**: MIT
