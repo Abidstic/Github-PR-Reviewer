@@ -125,7 +125,7 @@ python app.py --mode update-profiles --repo owner/repo
 
 1.  **Event Detection**: The `WebhookServer` receives a `pull_request.opened` event from GitHub.
 2.  **Requirements Extraction**: The `PRAnalyzer` uses an LLM to identify the technical requirements, complexity, and KU needs of the new PR.
-3.  **Reviewer Discovery**: The `ReviewerMatcher` queries the **SQLite database** to find all profiles that have contributed to the specific repository.
+3.  **Reviewer Discovery**: The `kairoreviewer` queries the **SQLite database** to find all profiles that have contributed to the specific repository.
 4.  **Hybrid Scoring**:
     *   **KU Match**: Reviewers are scored based on their historical frequency in the required KUs.
     *   **Context Match**: The `SimilarityMatcher` uses **FAISS** to find the top 5 most similar historical PRs and sees who reviewed them.
@@ -164,7 +164,7 @@ This system is designed to prove that **Frequency-Weighted KU Matching** signifi
 If you use kairoreviewer in your research, please cite it (see `CITATION.cff`, or use the "Cite this repository" button on GitHub):
 
 ```
-Abid, M. (2026). ReviewerMatch: AI-Powered Code Reviewer Assignment using
+Abid, M. (2026). kairoreviewer: AI-Powered Code Reviewer Assignment using
 Frequency-Weighted Knowledge Unit Matching. Zenodo. https://doi.org/10.5281/zenodo.21306453
 ```
 
