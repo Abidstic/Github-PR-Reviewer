@@ -27,4 +27,4 @@ abstract: >-
   candidate reviewers with a hybrid score combining KU frequency match,
   experience level, review activity, and FAISS vector similarity to past
   pull requests.
-doi: 10.5281/zenodo.22895486
+doi: 10.5281/zenodo.21306452
